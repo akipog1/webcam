@@ -1,0 +1,15 @@
+timestamp,player,raw_x,raw_y,flat_x,flat_y,ring,sector,points,label,source
+2026-11-16T13:04:19.015,Alice,812.4,328.0,765.0,460.3,outer_single,6,6,S6,auto
+2026-11-16T13:04:34.177,Alice,687.3,228.4,497.1,225.6,outer_single,20,20,S20,auto
+2026-11-16T13:05:27.447,Alice,,,,,outer_single,18,18,S18,key_override
+2026-11-16T13:05:33.297,Alice,201.2,543.4,-7.6,899.9,miss,,0,Miss,auto
+2026-11-16T13:16:51.597,Alice,520.0,261.0,396.6,412.4,inner_single,9,9,S9,auto
+2026-11-16T13:17:06.303,Alice,549.1,294.5,427.4,469.2,inner_single,14,14,S14,auto
+2026-11-16T13:17:34.952,Alice,,,,,outer_single,9,9,S9,key_override
+2026-11-16T13:17:43.774,Alice,705.0,505.3,563.2,802.9,outer_single,17,17,S17,auto
+2026-11-16T13:20:03.567,Bob,838.6,387.3,919.9,612.6,miss,,0,Miss,auto
+2026-11-16T13:20:20.528,Bob,,,,,outer_single,15,15,S15,key_override
+2026-11-16T13:20:24.702,Bob,833.1,380.2,915.2,599.4,miss,,0,Miss,auto
+2026-11-16T13:20:33.383,Bob,,,,,outer_single,10,10,S10,key_override
+2026-11-16T13:20:41.743,Bob,817.1,410.9,848.2,656.7,double,10,20,D10,auto
+2026-11-16T13:20:54.515,Bob,,,,,outer_single,10,10,S10,key_override

@@ -1,0 +1,10 @@
+Put these 3 files + this note in the webcam_dart_scorer folder (next to README.md), then:
+
+1) Headless accuracy check (expects 6/6):
+   python -m dart_scorer.replay test_clip.mp4 --expect expected.txt --calibration calibration.json
+
+2) Diagnostics dashboard video + CSV:
+   python -m dart_scorer.diagnostics test_clip.mp4 --calibration calibration.json --baseline-frame 5
+
+3) Full UI replay (calibration.json is reused as-is):
+   python -m dart_scorer --video test_clip.mp4 --calibration-file calibration.json
