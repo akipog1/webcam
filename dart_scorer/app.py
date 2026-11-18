@@ -1,318 +1,291 @@
-import argparse
-import sys
+"""Main application: camera/video loop, HUD and windows. Logic lives in controller.py."""
+from __future__ import annotations
+
+import dataclasses
+import logging
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Optional
+
 import cv2
 import numpy as np
 
-from .calibration import MultiCamCalibrator
-from .config import AppConfig
-from .controller import DualCamScoringController
-from .detector import DualCameraFusionDetector, FusedDetection
+from . import board
+from .calibration import Calibrator
+from .config import AppConfig, parse_args
+from .controller import Action, Controller, ThrowLogger  # ThrowLogger re-exported
+from .detector import DartDetector
+from .fusion import DetectionPairer, fuse
 from .game import GameState
-from .sources import DualFrameSource
+from .layout import apply_layout, compute_layout, screen_size
+from .sources import Camera, Recorder, VideoFile, open_source, open_source2  # Camera re-exported
+from .live_dashboard import LiveDashboard
+import time
+
+log = logging.getLogger("dart_scorer")
+
+BOARD_VIEW_PX = 600
 
 
-def run_interactive_calibration(
-    source_manager: DualFrameSource,
-    calibrator: MultiCamCalibrator,
-    save_path: Path,
-) -> bool:
+class App:
+    """Ties source, calibration, detector, game and HUD together.
+
+    Keys: b=baseline  n=next turn  u=undo  c=recalibrate  e=type override
+    (0-9/t/d/s/b + Enter); q=quit. Click in the Board window to re-score the
+    last dart at that position.
     """
-    Lets the user click the 4 cardinal outer-double intersections
-    (middle of the 20, 6, 3 and 11 doubles) on each camera feed.
-    """
-    ret, frames = source_manager.read_all()
-    if not ret:
-        print("[ERROR] Could not read frames for calibration.", file=sys.stderr)
-        return False
 
-    prompts = [
-        "1/4: TOP - outer edge of the double ring, middle of the 20",
-        "2/4: RIGHT - outer edge of the double ring, middle of the 6",
-        "3/4: BOTTOM - outer edge of the double ring, middle of the 3",
-        "4/4: LEFT - outer edge of the double ring, middle of the 11",
-    ]
+    def __init__(self, cfg: AppConfig) -> None:
+        self.cfg = cfg
+        self.cam = open_source(cfg)
+        self.cal = Calibrator(cfg.calibration_file)
+        self.det = DartDetector(cfg.detector)
+        self.game = GameState.new(cfg.players, cfg.game, cfg.double_out)
+        self.ctl = Controller(self.game, self.det, self.cal, ThrowLogger(cfg.log_file))
+        self.recorder: Optional[Recorder] = None
+        # optional second camera: independent detector, fused on each detection
+        self.cam2 = self.cal2 = self.det2 = self.pairer = None
+        self.recorder2: Optional[Recorder] = None
+        self.last_fused = None
+        self.dashboard = LiveDashboard(cfg.dual)
+        self.dashboard_enabled = True
+        self._read_time1 = self._read_time2 = None
+        if cfg.dual:
+            self.cam2 = open_source2(cfg)
+            self.cal2 = Calibrator(cfg.calibration_file2)
+            self.det2 = DartDetector(dataclasses.replace(cfg.detector, camera_side=cfg.camera_side2))
+            self.pairer = DetectionPairer(cfg.fuse_window)
+            self.ctl.det2 = self.det2
 
-    for cam_id, frame in frames.items():
-        clicked: List[Tuple[float, float]] = []
-        win_name = f"Calibrate {cam_id} - Click 4 Cardinal Outer-Double Points"
+    # ---------- calibration ----------
+    @staticmethod
+    def _calibration_reader(cam):
+        """Frames for the calibration window; a clip is looped so you can take your time."""
+        def read():
+            f = cam.read()
+            if f is None and not cam.is_live:
+                cam.rewind()
+                f = cam.read()
+            return f
+        return read
 
-        def on_mouse(event, x, y, flags, param):
-            if event == cv2.EVENT_LBUTTONDOWN and len(clicked) < 4:
-                clicked.append((float(x), float(y)))
+    def _calibrate(self, second: bool = False) -> bool:
+        cam, cal = (self.cam2, self.cal2) if second else (self.cam, self.cal)
+        ok = cal.run_interactive(self._calibration_reader(cam), auto=self.cfg.auto_calibrate,
+                                 window_rect=self._calibration_rect())
+        if not cam.is_live:
+            cam.rewind()
+        return ok
 
-        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(win_name, on_mouse)
+    def _layout(self) -> dict:
+        return compute_layout(screen_size(self.cfg.screen), self.cam2 is not None, self.cam.size,
+                              self.cam2.size if self.cam2 is not None else None, self.cfg.debug)
 
-        while len(clicked) < 4:
-            display = frame.copy()
-            cv2.putText(
-                display,
-                f"{cam_id}: Click {prompts[len(clicked)]} (ESC to cancel)",
-                (20, 35),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (0, 255, 255),
-                2,
-            )
-            for idx, pt in enumerate(clicked):
-                cx, cy = int(pt[0]), int(pt[1])
-                cv2.circle(display, (cx, cy), 6, (0, 255, 0), -1)
-                cv2.putText(
-                    display,
-                    str(idx + 1),
-                    (cx + 8, cy - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                )
+    def _calibration_rect(self):
+        """Calibration window: the camera-1 tile, or None to leave it where the OS puts it."""
+        return self._layout().get("Dart Scorer") if self.cfg.layout else None
 
-            cv2.imshow(win_name, display)
-            key = cv2.waitKey(20) & 0xFF
-            if key == 27:  # ESC
-                cv2.destroyWindow(win_name)
-                print(f"[INFO] Calibration cancelled for {cam_id}.")
-                return False
+    def _record2_path(self) -> str:
+        if self.cfg.record2:
+            return self.cfg.record2
+        p = Path(self.cfg.record)
+        return str(p.with_name(p.stem + "_cam2" + p.suffix))
 
-        cv2.destroyWindow(win_name)
-        calibrator.calibrate_camera(cam_id, clicked)
-        print(f"[INFO] Calibrated {cam_id} with points: {clicked}")
-
-    calibrator.save(save_path)
-    print(f"[INFO] Saved dual-camera calibration to {save_path}")
-    return True
-
-
-def draw_overlays(
-    frames: Dict[str, np.ndarray],
-    calibrator: MultiCamCalibrator,
-    controller: DualCamScoringController,
-    game: GameState,
-    scale: float = 0.65,
-) -> np.ndarray:
-    """Renders side-by-side camera feeds with calibration rings, tips, and HUD."""
-    annotated = []
-    last_fused: FusedDetection | None = controller.last_fused
-
-    # Precompute 36-point outer double ring in canonical board space
-    angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
-    ring_pts_mm = [
-        (
-            calibrator.board_radius_mm * np.cos(a),
-            calibrator.board_radius_mm * np.sin(a),
-        )
-        for a in angles
-    ]
-
-    for cam_id, frame in frames.items():
-        vis = frame.copy()
-
-        # Draw projected outer double ring if camera is calibrated
-        if cam_id in calibrator.inv_homographies:
-            ring_px = np.array(
-                [calibrator.board_to_pixel(cam_id, pt) for pt in ring_pts_mm],
-                dtype=np.int32,
-            )
-            cv2.polylines(vis, [ring_px], isClosed=True, color=(255, 200, 0), thickness=2)
-
-            # Draw last fused tip reprojected into this camera
-            if last_fused is not None:
-                fx, fy = calibrator.board_to_pixel(cam_id, last_fused.board_xy)
-                cv2.drawMarker(
-                    vis,
-                    (fx, fy),
-                    color=(0, 0, 255),
-                    markerType=cv2.MARKER_CROSS,
-                    markerSize=18,
-                    thickness=2,
-                )
-
-                # Draw per-camera raw tip detection if present
-                cam_det = last_fused.per_camera.get(cam_id)
-                if cam_det is not None:
-                    rx, ry = int(cam_det.pixel_tip[0]), int(cam_det.pixel_tip[1])
-                    cv2.circle(vis, (rx, ry), 5, (0, 255, 0), -1)
-
-        cv2.putText(
-            vis,
-            f"{cam_id} | State: {controller.state.name}",
-            (15, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.75,
-            (255, 255, 255),
-            2,
-        )
-
-        if scale != 1.0:
-            vis = cv2.resize(vis, (0, 0), fx=scale, fy=scale)
-        annotated.append(vis)
-
-    combined = np.hstack(annotated) if len(annotated) > 1 else annotated[0]
-
-    # Top status banner
-    banner_h = 42
-    banner = np.zeros((banner_h, combined.shape[1], 3), dtype=np.uint8)
-    remaining = game.player.remaining
-    mode_str = last_fused.mode if last_fused else "waiting"
-    hud_text = (
-        f"Score Remaining: {remaining} | Darts in Turn: {controller.darts_in_turn}/3 | "
-        f"Last Fusion: {mode_str} | Keys: [C]alibrate  [R]eset Board  [Q]uit"
-    )
-    cv2.putText(
-        banner,
-        hud_text,
-        (15, 28),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        (0, 255, 180),
-        2,
-    )
-    return np.vstack([banner, combined])
-
-
-def parse_source_arg(val: str) -> Union[int, str]:
-    return int(val) if val.isdigit() else val
-
-
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Dual-Camera Webcam Dart Scorer")
-    parser.add_argument(
-        "--cam0",
-        type=str,
-        default="2",
-        help="Camera 0 index or video path (default: 2)",
-    )
-    parser.add_argument(
-        "--cam1",
-        type=str,
-        default="3",
-        help="Camera 1 index or video path (default: 3)",
-    )
-    parser.add_argument(
-        "--calibration",
-        type=Path,
-        default=Path("calibration.json"),
-        help="Path to calibration.json",
-    )
-    parser.add_argument(
-        "--calibrate",
-        action="store_true",
-        help="Run interactive 4-point calibration on startup",
-    )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run without OpenCV GUI window",
-    )
-    return parser
-
-
-def main() -> None:
-    args = build_arg_parser().parse_args()
-
-    config = AppConfig(
-        camera_sources={
-            "cam_0": parse_source_arg(args.cam0),
-            "cam_1": parse_source_arg(args.cam1),
-        },
-        calibration_path=args.calibration,
-        show_preview=not args.headless,
-    )
-
-    print(f"[INFO] Opening camera streams: {config.camera_sources}")
-    sources = DualFrameSource(
-        sources=config.camera_sources,
-        width=config.frame_width,
-        height=config.frame_height,
-        fps=config.fps,
-    )
-
-    if config.calibration_path.exists():
-        calibrator = MultiCamCalibrator.load(config.calibration_path)
-        print(f"[INFO] Loaded calibration from {config.calibration_path}")
-        missing = [c for c in config.camera_sources if c not in calibrator.homographies]
-        if missing:
-            print(f"[WARN] {config.calibration_path} has no calibration for {missing} "
-                  "(old single-camera file?). Recalibrating both cameras.")
-            calibrator = MultiCamCalibrator(board_radius_mm=config.board_radius_mm)
-            args.calibrate = True
-    else:
-        calibrator = MultiCamCalibrator(board_radius_mm=config.board_radius_mm)
-        print("[WARN] No calibration.json found; launching interactive calibration.")
-        args.calibrate = True
-
-    if args.calibrate:
-        run_interactive_calibration(sources, calibrator, config.calibration_path)
-
-    still_missing = [c for c in config.camera_sources if c not in calibrator.homographies]
-    if still_missing:
-        print(f"[ERROR] Cameras not calibrated: {still_missing}. Run again and click all 4 points "
-              "on each camera window.", file=sys.stderr)
-        sources.release()
-        cv2.destroyAllWindows()
-        sys.exit(1)
-
-    detector = DualCameraFusionDetector(
-        cam_ids=("cam_0", "cam_1"),
-        max_agreement_mm=config.max_agreement_dist_mm,
-    )
-    controller = DualCamScoringController(
-        calibrator=calibrator,
-        detector=detector,
-        motion_threshold=config.motion_threshold,
-        settle_frames_required=config.settle_frames_required,
-        clear_board_threshold=config.clear_board_threshold,
-    )
-    game = GameState.new(["Player 1"], start=config.starting_score)
-
-    try:
-        while True:
-            ret, frames = sources.read_all()
-            if not ret:
-                print("[INFO] End of stream or camera disconnected.")
-                break
-
-            event = controller.process_frames(frames)
-            if event is not None:
-                if event["event"] == "dart_scored":
-                    score = event["score"]
-                    result = game.add_dart(score)
-                    print(
-                        f"[DART {event['dart_number']}] {score.label} ({score.points}) | "
-                        f"XY: ({event['board_xy'][0]:.1f}, {event['board_xy'][1]:.1f}) mm | "
-                        f"Mode: {event['fusion_mode']} (conf={event['confidence']}) | "
-                        f"Remaining: {game.player.remaining}"
-                        + (f" | {result.message}" if result.message else "")
-                    )
-                elif event["event"] == "board_cleared":
-                    game.next_turn()
-                    print(f"[INFO] Board cleared - next turn ({game.player.name}, {game.player.remaining} left).")
-
-            if config.show_preview:
-                canvas = draw_overlays(
-                    frames,
-                    calibrator,
-                    controller,
-                    game,
-                    scale=config.preview_scale,
-                )
-                cv2.imshow("Dual-Camera Dart Scorer (Cam 2 & Cam 3)", canvas)
-
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
+    # ---------- main loop ----------
+    def run(self) -> None:
+        if not self.cam.is_open():
+            log.error("could not open %s", self.cfg.video or f"camera {self.cfg.camera}")
+            return
+        if self.cam2 is not None and not self.cam2.is_open():
+            log.error("could not open %s", self.cfg.video2 or f"camera {self.cfg.camera2}")
+            return
+        if self.cfg.recalibrate or not self.cal.load(self.cam.size):
+            if not self._calibrate():
+                log.info("calibration cancelled")
+                return
+        if self.cam2 is not None and (self.cfg.recalibrate or not self.cal2.load(self.cam2.size)):
+            if not self._calibrate(second=True):
+                log.info("calibration of camera 2 cancelled")
+                return
+        if self.cfg.record:
+            self.recorder = Recorder(self.cfg.record, self.cam.fps, self.cam.size)
+            if self.cam2 is not None:
+                self.recorder2 = Recorder(self._record2_path(), self.cam2.fps, self.cam2.size)
+        if self.cfg.layout:
+            apply_layout(self._layout())
+        cv2.namedWindow("Board")
+        cv2.setMouseCallback("Board", self._on_board_click)
+        delay = 1 if self.cam.is_live else max(1, int(1000 / self.cam.fps))
+        try:
+            while True:
+                frame = self.cam.read()
+                self._read_time1 = time.perf_counter()
+                if frame is None:
+                    log.error("camera lost" if self.cam.is_live else "end of video")
                     break
-                elif key == ord("r"):
-                    controller.initialize(frames)
-                    print("[INFO] Empty board baseline manually reset.")
-                elif key == ord("c"):
-                    run_interactive_calibration(sources, calibrator, config.calibration_path)
-                    controller.initialize(frames)
+                if self.recorder:
+                    self.recorder.write(frame)
+                frame2 = None
+                if self.cam2 is not None:
+                    frame2 = self.cam2.read()
+                    self._read_time2 = time.perf_counter()
+                    if frame2 is None:
+                        log.error("camera 2 lost" if self.cam2.is_live else "end of video 2")
+                        break
+                    if self.recorder2:
+                        self.recorder2.write(frame2)
+                t0 = time.perf_counter()
+                det = self.det.update(frame)
+                ms1 = (time.perf_counter() - t0) * 1000.0
+                self.dashboard.record_frame(0, self._read_time1, ms1, self.det, det)
+                det2 = None
+                if self.cam2 is None:
+                    if det is not None:
+                        scored = self.ctl.on_detection(det)
+                        if scored is not None:
+                            self.dashboard.record_result(self.cal.to_board(det.tip), "cam1")
+                else:
+                    t0 = time.perf_counter()
+                    det2 = self.det2.update(frame2)
+                    ms2 = (time.perf_counter() - t0) * 1000.0
+                    self.dashboard.record_frame(1, self._read_time2, ms2, self.det2, det2)
+                    self._update_dual(det, det2)
+                self._draw(frame)
+                if frame2 is not None:
+                    self._draw2(frame2)
+                if self.dashboard_enabled:
+                    skew = abs(self._read_time2 - self._read_time1) * 1000.0 if self._read_time1 is not None and self._read_time2 is not None else None
+                    dashboard_frame = self.dashboard.render(frame, frame2, self.det, self.det2,
+                                                             self.cal, self.cal2, self.game, self.ctl, skew)
+                    cv2.imshow(LiveDashboard.WINDOW, dashboard_frame)
+                key = cv2.waitKey(delay) & 0xFF
+                if self.ctl.edit_buffer is None and key in (ord("d"), ord("D")):
+                    self.dashboard_enabled = not self.dashboard_enabled
+                    if not self.dashboard_enabled:
+                        cv2.destroyWindow(LiveDashboard.WINDOW)
+                    continue
+                if self.ctl.edit_buffer is None and key in (ord("x"), ord("X")):
+                    self.dashboard.false_positives += 1
+                    continue
+                if self.ctl.edit_buffer is None and key in (ord("m"), ord("M")):
+                    self.dashboard.missed_darts += 1
+                    continue
+                action = self.ctl.handle_key(key, frame, frame2)
+                if action is Action.QUIT:
+                    break
+                if action is Action.RECALIBRATE:
+                    ok = self._calibrate()
+                    if ok and self.cam2 is not None:
+                        ok = self._calibrate(second=True)
+                    if ok:
+                        self.ctl.after_recalibrate()
+                        if self.pairer:
+                            self.pairer.clear()
+                self.det.after_scored()
+                if self.det2 is not None:
+                    self.det2.after_scored()
+        finally:
+            self.cam.release()
+            if self.cam2 is not None:
+                self.cam2.release()
+            if self.recorder:
+                self.recorder.release()
+            if self.recorder2:
+                self.recorder2.release()
+            cv2.destroyAllWindows()
 
-    finally:
-        sources.release()
-        cv2.destroyAllWindows()
+    def _update_dual(self, d1, d2) -> None:
+        """Pair detections from the two cameras and score the fused result."""
+        ready = []
+        if d1 is not None:
+            ready += self.pairer.push(1, d1)
+        if d2 is not None:
+            ready += self.pairer.push(2, d2)
+        ready += self.pairer.tick()
+        for a, b in ready:
+            tip = fuse(a, self.cal, b, self.cal2, self.cfg.min_cross_angle)
+            if tip is not None:
+                self.last_fused = tip
+                scored = self.ctl.on_fused(tip)
+                if scored is not None:
+                    self.dashboard.record_result(tip.flat, tip.method)
+                log.info("fused (%s) -> %s", tip.method, self.game.turn_darts[-1].label
+                         if self.game.turn_darts else "-")
+
+    def _draw2(self, frame) -> None:
+        disp = frame.copy()
+        self.cal2.draw_overlay(disp, (0, 200, 200))
+        d = self.det2.last_detection
+        if d is not None:
+            cv2.circle(disp, (int(d.tip[0]), int(d.tip[1])), 5, (0, 0, 255), -1)
+        t = f"cam 2 [{self.det2.state.value}]" + (f"  last: {self.last_fused.method}" if self.last_fused else "")
+        cv2.putText(disp, t, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
+        cv2.putText(disp, t, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.imshow("Dart Scorer 2", disp)
+
+    def _board_view_size(self) -> int:
+        return board.CANVAS_SIZE if self.cfg.debug else BOARD_VIEW_PX
+
+    def _on_board_click(self, event, x, y, *_) -> None:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            k = board.CANVAS_SIZE / self._board_view_size()   # window px -> canvas px
+            self.ctl.board_click(x * k, y * k)
+
+    # ---------- HUD ----------
+    def _draw(self, frame) -> None:
+        disp = frame.copy()
+        self.cal.draw_overlay(disp, (0, 200, 200))
+        d = self.det.last_detection
+        if d is not None and self.cfg.debug:
+            cv2.drawContours(disp, [d.contour], -1, (0, 255, 0), 1)
+        if d is not None:
+            cv2.circle(disp, (int(d.tip[0]), int(d.tip[1])), 5, (0, 0, 255), -1)
+        g, p, c = self.game, self.game.player, self.ctl
+        lines = [f"{p.name}: {p.remaining}   avg {p.three_dart_average:.1f}",
+                 f"Darts: {' '.join(s.label for s in g.turn_darts) or '-'}   turn {g.turn_total}",
+                 f"[{self.det.state.value}{'/' + self.det2.state.value if self.det2 else ''}] {c.message}"]
+        if c.edit_buffer is not None:
+            lines.append(f"Override: {c.edit_buffer}_")
+        if self.recorder:
+            lines.append("REC")
+        for i, t in enumerate(lines):
+            cv2.putText(disp, t, (20, 35 + 32 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
+            cv2.putText(disp, t, (20, 35 + 32 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        others = "  ".join(f"{q.name}:{q.remaining}" for q in g.players)
+        cv2.putText(disp, others, (20, disp.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.imshow("Dart Scorer", disp)
+
+        warped = cv2.warpPerspective(frame, self.cal.H, (board.CANVAS_SIZE, board.CANVAS_SIZE))
+        draw_board_lines(warped)
+        for pos, s in c.marks:
+            if pos is None:
+                continue
+            x, y = pos
+            cv2.circle(warped, (int(x), int(y)), 7, (0, 0, 255), -1)
+            cv2.putText(warped, s.label, (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.imshow("Board", cv2.resize(warped, (BOARD_VIEW_PX,) * 2) if not self.cfg.debug else warped)
+        if self.cfg.debug and self.det.last_mask is not None:
+            cv2.imshow("Mask", self.det.last_mask)
+
+
+def draw_board_lines(img: np.ndarray, color=(0, 255, 255)) -> None:
+    c = (int(board.CENTER[0]), int(board.CENTER[1]))
+    for r in board.RING_RADII_PX:
+        cv2.circle(img, c, int(round(r)), color, 1, cv2.LINE_AA)
+    for i in range(20):
+        a = board.sector_wire_angle(i)
+        p1 = tuple(int(v) for v in board.polar_to_canvas(board.OUTER_BULL_PX, a))
+        p2 = tuple(int(v) for v in board.polar_to_canvas(board.DOUBLE_OUTER_PX, a))
+        cv2.line(img, p1, p2, color, 1, cv2.LINE_AA)
+        lx, ly = board.polar_to_canvas(board.DOUBLE_OUTER_PX + 30, i * 18.0)
+        cv2.putText(img, str(board.SECTORS[i]), (int(lx) - 12, int(ly) + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    cfg = parse_args(argv)
+    if cfg.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+    App(cfg).run()
 
 
 if __name__ == "__main__":

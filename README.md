@@ -7,7 +7,7 @@ Real-time steel-tip dart scoring with one webcam, OpenCV and numpy.
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python -m dart_scorer --camera 0 --width 1280 --height 720 --players Alice Bob --game 501
-python -m pytest            # 94 tests
+python -m pytest            # 110 tests
 ```
 Python 3.10+. Useful flags: `--debug`, `--recalibrate`, `--no-double-out`, `--game 301`,
 plus every detector setting, e.g. `--diff-threshold 25 --settle-frames 20 --tip-method lowest --camera-side left`.
@@ -51,6 +51,24 @@ python -m dart_scorer.replay session.mp4 --expect expected.txt --calibration cal
 Prints a per-dart table (`ok / WRONG / MISS / EXTRA`) and the accuracy; exit code 1 below `--min-accuracy`
 (default 1.0). The calibration must have been made at the clip's resolution. Detector flags are the same as the live app,
 so you can sweep settings against the same clip.
+
+## Two cameras (v2.3)
+A second camera removes the depth ambiguity of a single view: each camera's dart axis is mapped onto the
+board plane, and the two lines intersect at the true tip.
+```bash
+python -m dart_scorer --camera 2 --camera2 3 --players Alice Bob --camera-side2 bottom
+```
+- Each camera is calibrated separately on first start (calibration.json and calibration2.json; `--recalibrate` or key `c` redoes both).
+- Windows: **Dart Scorer** and **Board** (camera 1), **Dart Scorer 2** (camera 2).
+- **Remove all darts before pressing `b`** (it baselines both cameras); `n` and `u` act on both.
+- Best with the cameras 60-90 degrees apart around the board (e.g. one low in front, one at the side).
+  Lines closer than `--min-cross-angle` (20 deg) fall back to averaging both tips; if only one camera sees a dart, that one is used.
+  The `source` column in `throws.csv` says which: `auto-intersection`, `auto-average`, `auto-cam1`, `auto-cam2`.
+- `--fuse-window 45`: frames to wait for the other camera. Detector flags apply to both cameras; `--camera-side2` sets camera 2's tip direction (only used in fallbacks).
+- Use separate USB ports/controllers; if frames drop, lower `--width/--height` (recalibrate after changing).
+- Record both: `--record s.mp4` also writes `s_cam2.mp4`. Replay: `--video s.mp4 --video2 s_cam2.mp4` (UI) or
+  `python -m dart_scorer.replay s.mp4 --video2 s_cam2.mp4 --calibration calibration.json --calibration2 calibration2.json --expect expected.txt`.
+- Tests use a simulated 3-D rig (`tests/synth3d.py`): ~0.5 mm fused error vs 3-4 mm single camera. Real boards will be worse; check with your own clips.
 
 ## Camera placement
 - **Default (`--camera-side bottom`)**: camera below the board, 30–60 cm in front, looking up at ~30–45°.
@@ -97,6 +115,17 @@ so you can sweep settings against the same clip.
 - Board rotation is assumed to be standard (20 at top); only the homography corrects small rotation.
 - Auto-exposure changes can trigger false detections; lock camera exposure if possible.
 - No persistence of game state between runs; no cricket or other game modes.
+
+
+## Live diagnostic dashboard (v2.4)
+The application now opens a live diagnostics window by default alongside the scorer windows. It shows both camera feeds (when enabled), calibration overlays, detected tip markers, a board-plane position preview, last calculated score and fusion method, per-camera FPS and detector processing time, detector state, tip-shape quality heuristic, camera read skew, and projected-tip separation when both cameras have detections.
+
+Dashboard controls (available when the score-entry override is not active):
+- `d`: show/hide the live diagnostics dashboard.
+- `x`: increment the manually tracked false-positive count.
+- `m`: increment the manually tracked missed-dart count.
+
+The confidence/quality value is a heuristic based on contour shape and area; it is **not** a calibrated probability. The camera skew value is the difference between sequential frame-read completion times, not hardware exposure synchronisation. The missed/false-positive counters require the operator to annotate events with `m`/`x`; they are not inferred automatically.
 
 ## Visual offline diagnostics (added in diagnostics update)
 Create an annotated video and a per-frame CSV from any recorded clip:

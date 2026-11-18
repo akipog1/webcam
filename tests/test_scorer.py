@@ -1,64 +1,79 @@
 import math
+
 import pytest
+
 from dart_scorer import board
-from dart_scorer.scorer import score_board_mm, parse_score
-from dart_scorer.game import GameState
+from dart_scorer.scorer import parse_score, score_point, score_polar
 
 
-def at(r_mm, angle_deg):
-    """Board-mm point at radius r, clockwise-from-top angle."""
-    a = math.radians(angle_deg)
-    return score_board_mm(r_mm * math.sin(a), -r_mm * math.cos(a))
+def pt(r, a):
+    return board.polar_to_canvas(r, a)
 
 
-@pytest.mark.parametrize("r,label,pts", [
-    (0.0, "Bullseye", 50), (6.35, "Bullseye", 50), (6.36, "Outer bull", 25),
-    (15.9, "Outer bull", 25), (15.95, "S20", 20),
-    (99.0, "S20", 20), (99.05, "T20", 60), (107.0, "T20", 60), (107.05, "S20", 20),
-    (162.0, "S20", 20), (162.05, "D20", 40), (170.0, "D20", 40), (170.05, "Miss", 0),
+@pytest.mark.parametrize("i,sector", list(enumerate(board.SECTORS)))
+def test_every_sector_centre_and_edges(i, sector):
+    r = (board.TREBLE_OUTER_PX + board.DOUBLE_INNER_PX) / 2
+    for a in (i * 18.0, i * 18.0 - 8.9, i * 18.0 + 8.9):
+        s = score_point(*pt(r, a % 360))
+        assert s.sector == sector and s.points == sector
+
+
+def test_twenty_is_top_and_six_is_right():
+    assert score_point(500, 300).sector == 20
+    assert score_point(700, 500).sector == 6
+    assert score_point(500, 700).sector == 3
+    assert score_point(300, 500).sector == 11
+
+
+@pytest.mark.parametrize("radius,ring,mult", [
+    (0, "inner_bull", 2), (board.INNER_BULL_PX, "inner_bull", 2),
+    (board.INNER_BULL_PX + 0.01, "outer_bull", 1), (board.OUTER_BULL_PX, "outer_bull", 1),
+    (board.OUTER_BULL_PX + 0.01, "inner_single", 1), (board.TREBLE_INNER_PX, "inner_single", 1),
+    (board.TREBLE_INNER_PX + 0.01, "treble", 3), (board.TREBLE_OUTER_PX, "treble", 3),
+    (board.TREBLE_OUTER_PX + 0.01, "outer_single", 1), (board.DOUBLE_INNER_PX, "outer_single", 1),
+    (board.DOUBLE_INNER_PX + 0.01, "double", 2), (board.DOUBLE_OUTER_PX, "double", 2),
+    (board.DOUBLE_OUTER_PX + 0.01, "miss", 0), (499, "miss", 0),
 ])
-def test_radial_boundaries(r, label, pts):
-    s = at(r, 0)
-    assert (s.label, s.points) == (label, pts)
+def test_ring_boundaries_contiguous(radius, ring, mult):
+    s = score_polar(radius, 0)
+    assert s.ring == ring and s.multiplier == mult
 
 
-def test_bull_is_double():
-    assert at(0, 0).is_double and not at(10, 0).is_double
+def test_points():
+    assert score_polar(0, 0).points == 50
+    assert score_polar(board.OUTER_BULL_PX, 0).points == 25
+    assert score_polar(board.TREBLE_INNER_PX + 1, 0).points == 60
+    assert score_polar(board.DOUBLE_OUTER_PX - 1, 0).points == 40
+    assert score_polar(board.DOUBLE_OUTER_PX + 1, 0).points == 0
 
 
-def test_sector_order_and_wires():
-    order = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
-    for i, n in enumerate(order):
-        assert at(130, i * 18).sector == n
-    # wire at +9 deg belongs to the sector counted from the left of the wire
-    assert at(130, 8.99).sector == 20 and at(130, 9.01).sector == 1
-    assert at(130, -8.99).sector == 20 and at(130, -9.01).sector == 5
+def test_radii_from_real_dimensions():
+    assert math.isclose(board.TREBLE_OUTER_PX / board.DOUBLE_OUTER_PX, 107 / 170)
+    assert math.isclose(board.INNER_BULL_PX / board.DOUBLE_OUTER_PX, 6.35 / 170)
 
 
-def test_cardinal_calibration_points():
-    assert at(170, 0).sector == 20 and at(170, 90).sector == 6
-    assert at(170, 180).sector == 3 and at(170, 270).sector == 11
+def test_calibration_targets_match_scoring_radius():
+    for name, (x, y) in board.calibration_targets().items():
+        if name != "bull":
+            assert math.isclose(math.hypot(x - 500, y - 500), board.DOUBLE_OUTER_PX)
+            assert score_point(x, y).ring == "double"
 
 
-def test_mm_matches_pixel_scale():
-    assert board.DOUBLE_OUTER_PX / board.PX_PER_MM == pytest.approx(170.0)
+@pytest.mark.parametrize("txt,pts", [("T20", 60), ("d16", 32), ("S5", 5), ("7", 7), ("25", 25), ("50", 50), ("0", 0)])
+def test_parse_score(txt, pts):
+    assert parse_score(txt).points == pts
 
 
-@pytest.mark.parametrize("t,label,pts", [("T20", "T20", 60), ("d16", "D16", 32), ("5", "S5", 5),
-                                         ("50", "Bullseye", 50), ("25", "Outer bull", 25), ("0", "Miss", 0)])
-def test_parse(t, label, pts):
-    s = parse_score(t)
-    assert (s.label, s.points) == (label, pts)
+def test_parse_invalid():
+    with pytest.raises(ValueError):
+        parse_score("T21")
 
 
-def test_game_double_out_and_bust():
-    g = GameState.new(["A"], start=40)
-    g.add_dart(parse_score("S20"))
-    r = g.add_dart(parse_score("D10"))
-    assert r.status == "win" and g.winner == "A"
-    g = GameState.new(["A"], start=32)
-    assert g.add_dart(parse_score("S16")).status == "ok"
-    assert g.add_dart(parse_score("S16")).status == "bust"  # 0 on a single
-    assert g.player.remaining == 32
-    g = GameState.new(["A"], start=50)
-    assert g.add_dart(parse_score("50")).status == "win"    # bull checks out
+def test_parse_score_bull_shorthand_and_errors():
+    from dart_scorer.scorer import parse_score
+    import pytest
+    assert parse_score("B").points == 50
+    assert parse_score("bull").points == 50
+    for bad in ("", "T", "X5", "T21", "S", "BB"):
+        with pytest.raises(ValueError):
+            parse_score(bad)
