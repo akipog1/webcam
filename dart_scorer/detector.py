@@ -1,202 +1,228 @@
+"""Dart detection with a per-dart state machine.
+
+States::
+
+    WAIT_BASELINE -> WAIT_THROW -> SETTLING -> SCORED -> WAIT_THROW (next dart)
+                                                    \\-> WAIT_REMOVAL (after 3 darts)
+    WAIT_REMOVAL -> WAIT_THROW once the board matches the turn-start baseline again.
+
+After each scored dart the *reference* frame is replaced by the current frame,
+so the next diff only contains the newest dart. Large-area changes (a hand or
+body) are ignored and restart settling.
+"""
+from __future__ import annotations
+
+import enum
+import logging
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Optional
+
 import cv2
 import numpy as np
-from .calibration import MultiCamCalibrator
+
+from .config import DetectorConfig
+
+log = logging.getLogger(__name__)
+
+
+class State(enum.Enum):
+    WAIT_BASELINE = "WAIT_BASELINE"
+    WAIT_THROW = "WAIT_THROW"
+    SETTLING = "SETTLING"
+    SCORED = "SCORED"
+    WAIT_REMOVAL = "WAIT_REMOVAL"
 
 
 @dataclass
-class CameraDetection:
-    cam_id: str
-    pixel_tip: Tuple[float, float]
-    board_xy: Tuple[float, float]
-    confidence: float
+class Detection:
+    """A settled dart, in raw camera pixels."""
+    tip: tuple[float, float]
+    centroid: tuple[float, float]
+    contour: np.ndarray
     area: float
-    elongation: float
-    mask: np.ndarray
 
 
-@dataclass
-class FusedDetection:
-    board_xy: Tuple[float, float]
-    mode: str
-    confidence: float
-    per_camera: Dict[str, Optional[CameraDetection]]
+class DartDetector:
+    """Feed frames via :meth:`update`; returns a Detection exactly once per dart."""
 
+    def __init__(self, cfg: DetectorConfig, darts_per_turn: int = 3) -> None:
+        self.cfg = cfg
+        self.darts_per_turn = darts_per_turn
+        self.state = State.WAIT_BASELINE
+        self.reference: Optional[np.ndarray] = None   # float32, last-dart reference
+        self.turn_baseline: Optional[np.ndarray] = None  # empty-board reference
+        self.darts_this_turn = 0
+        self._settle_count = 0
+        self._last_mask: Optional[np.ndarray] = None
+        self.last_mask: Optional[np.ndarray] = None
+        self.last_detection: Optional[Detection] = None
 
-class SingleCameraDartDetector:
-    """Background-difference dart detector with tip extraction and confidence scoring."""
-
-    def __init__(
-        self,
-        cam_id: str,
-        min_contour_area: float = 180.0,
-        max_contour_area: float = 25000.0,
-        diff_threshold: int = 32,
-    ):
-        self.cam_id = cam_id
-        self.min_contour_area = min_contour_area
-        self.max_contour_area = max_contour_area
-        self.diff_threshold = diff_threshold
-
-        self.reference_gray: Optional[np.ndarray] = None
-        self.accumulated_dart_mask: Optional[np.ndarray] = None
-
-    def reset_reference(self, frame: np.ndarray) -> None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        self.reference_gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        self.accumulated_dart_mask = np.zeros_like(gray, dtype=np.uint8)
-
-    def update_reference_with_dart(self, frame: np.ndarray, dart_mask: np.ndarray) -> None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        self.reference_gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        if self.accumulated_dart_mask is not None:
-            self.accumulated_dart_mask = cv2.bitwise_or(self.accumulated_dart_mask, dart_mask)
-
-    def motion_score(self, prev_frame: np.ndarray, curr_frame: np.ndarray) -> float:
-        g1 = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-        g2 = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
-        delta = cv2.absdiff(g1, g2)
-        _, thresh = cv2.threshold(delta, 25, 255, cv2.THRESH_BINARY)
-        return float(np.count_nonzero(thresh)) / float(thresh.size)
-
-    def detect(
-        self, frame: np.ndarray, calibrator: MultiCamCalibrator
-    ) -> Optional[CameraDetection]:
-        if self.reference_gray is None:
-            self.reset_reference(frame)
-            return None
-
-        gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (5, 5), 0)
-        diff = cv2.absdiff(self.reference_gray, gray)
-        _, mask = cv2.threshold(diff, self.diff_threshold, 255, cv2.THRESH_BINARY)
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        valid = [
-            c for c in contours
-            if self.min_contour_area <= cv2.contourArea(c) <= self.max_contour_area
-        ]
-        if not valid:
-            return None
-
-        # Merge split fragments (e.g., barrel + flight separated by wire reflection)
-        merged_pts = np.vstack(valid)
-        area = float(sum(cv2.contourArea(c) for c in valid))
-
-        # Fit minimum area bounding rectangle to measure dart elongation
-        rect = cv2.minAreaRect(merged_pts)
-        w, h = rect[1]
-        short_side = max(min(w, h), 1.0)
-        long_side = max(w, h)
-        elongation = float(long_side / short_side)
-
-        # Find extreme endpoints along principal axis; the point closer to board center
-        # in canonical space corresponds to the steel tip embedded in the sisal
-        pts = merged_pts.reshape(-1, 2).astype(np.float32)
-        mean = np.mean(pts, axis=0)
-        _, eigenvectors = cv2.PCACompute(pts, mean=mean.reshape(1, 2))
-        axis = eigenvectors[0]
-
-        projections = (pts - mean) @ axis
-        end_a = tuple(pts[np.argmin(projections)])
-        end_b = tuple(pts[np.argmax(projections)])
-
-        board_a = calibrator.pixel_to_board(self.cam_id, end_a)
-        board_b = calibrator.pixel_to_board(self.cam_id, end_b)
-
-        # The flight sticks outward away from the board plane, projecting further from center
-        if np.hypot(*board_a) <= np.hypot(*board_b):
-            pixel_tip, board_xy = end_a, board_a
+    # ---------- preprocessing ----------
+    def preprocess(self, frame: np.ndarray) -> np.ndarray:
+        """BGR (or grey) frame -> blurred single channel float32."""
+        if frame.ndim == 3:
+            if self.cfg.shadow_v_only:
+                ch = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[:, :, 2]
+            else:
+                ch = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
-            pixel_tip, board_xy = end_b, board_b
+            ch = frame
+        k = self.cfg.blur_kernel | 1
+        return cv2.GaussianBlur(ch, (k, k), 0).astype(np.float32)
 
-        # Compute confidence (0.1 to 1.0) based on elongation & occlusion overlap
-        elongation_score = min(elongation / 4.5, 1.0)
+    def diff_mask(self, img: np.ndarray, ref: np.ndarray) -> np.ndarray:
+        diff = cv2.absdiff(img, ref).astype(np.uint8)
+        _, m = cv2.threshold(diff, self.cfg.diff_threshold, 255, cv2.THRESH_BINARY)
+        k = np.ones((self.cfg.morph_kernel, self.cfg.morph_kernel), np.uint8)
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k)
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k, iterations=2)
+        return m
 
-        dart_mask = np.zeros_like(mask)
-        cv2.drawContours(dart_mask, valid, -1, 255, thickness=cv2.FILLED)
+    # ---------- control ----------
+    def capture_baseline(self, frame: np.ndarray) -> None:
+        img = self.preprocess(frame)
+        self.reference = img.copy()
+        self.turn_baseline = img.copy()
+        self.darts_this_turn = 0
+        self._settle_count = 0
+        self.state = State.WAIT_THROW
+        log.info("baseline captured")
 
-        occlusion_penalty = 0.0
-        if self.accumulated_dart_mask is not None:
-            overlap = cv2.bitwise_and(dart_mask, self.accumulated_dart_mask)
-            overlap_ratio = np.count_nonzero(overlap) / max(np.count_nonzero(dart_mask), 1)
-            occlusion_penalty = min(overlap_ratio * 0.8, 0.7)
+    def next_turn(self, frame: np.ndarray) -> None:
+        """Manual turn reset (key ``n``): treat the current board as empty."""
+        self.capture_baseline(frame)
 
-        confidence = float(np.clip(elongation_score * (1.0 - occlusion_penalty), 0.1, 1.0))
+    def undo_dart(self, frame: np.ndarray) -> None:
+        """Roll back one dart after a manual undo.
 
-        return CameraDetection(
-            cam_id=self.cam_id,
-            pixel_tip=pixel_tip,
-            board_xy=board_xy,
-            confidence=confidence,
-            area=area,
-            elongation=elongation,
-            mask=dart_mask,
-        )
+        Leaves WAIT_REMOVAL/SCORED/SETTLING so the next throw is detected, and
+        re-bases the reference on the current frame (the dart may still be in
+        the board). The turn-start baseline is kept for removal detection.
+        """
+        self.darts_this_turn = max(0, self.darts_this_turn - 1)
+        self._settle_count = 0
+        self._last_mask = None
+        if self.state != State.WAIT_BASELINE:
+            self.reference = self.preprocess(frame)
+            self.state = State.WAIT_THROW
 
+    # ---------- main ----------
+    def update(self, frame: np.ndarray) -> Optional[Detection]:
+        if self.state == State.WAIT_BASELINE or self.reference is None:
+            return None
+        img = self.preprocess(frame)
 
-class DualCameraFusionDetector:
-    """Fuses board-plane detections from two calibrated cameras."""
-
-    def __init__(self, cam_ids: Tuple[str, str] = ("cam_0", "cam_1"), max_agreement_mm: float = 12.0):
-        self.cam_ids = cam_ids
-        self.max_agreement_mm = max_agreement_mm
-        self.detectors: Dict[str, SingleCameraDartDetector] = {
-            cid: SingleCameraDartDetector(cid) for cid in cam_ids
-        }
-
-    def reset_all(self, frames: Dict[str, np.ndarray]) -> None:
-        for cid, det in self.detectors.items():
-            if cid in frames:
-                det.reset_reference(frames[cid])
-
-    def commit_throw(self, frames: Dict[str, np.ndarray], fused: FusedDetection) -> None:
-        for cid, det in self.detectors.items():
-            cam_det = fused.per_camera.get(cid)
-            if cam_det is not None:
-                det.update_reference_with_dart(frames[cid], cam_det.mask)
-            elif cid in frames:
-                det.update_reference_with_dart(frames[cid], np.zeros(frames[cid].shape[:2], dtype=np.uint8))
-
-    def detect_and_fuse(
-        self, frames: Dict[str, np.ndarray], calibrator: MultiCamCalibrator
-    ) -> Optional[FusedDetection]:
-        c0, c1 = self.cam_ids
-        det0 = self.detectors[c0].detect(frames[c0], calibrator) if c0 in frames else None
-        det1 = self.detectors[c1].detect(frames[c1], calibrator) if c1 in frames else None
-
-        per_cam = {c0: det0, c1: det1}
-
-        if det0 is None and det1 is None:
+        if self.state == State.WAIT_REMOVAL:
+            m = self.diff_mask(img, self.turn_baseline)
+            self.last_mask = m
+            if cv2.countNonZero(m) < self.cfg.min_area * 2:
+                self._settle_count += 1
+                if self._settle_count >= self.cfg.settle_frames:
+                    log.info("darts removed; ready for next turn")
+                    self.capture_baseline(frame)
+            else:
+                self._settle_count = 0
             return None
 
-        if det0 is not None and det1 is None:
-            return FusedDetection(det0.board_xy, f"single_{c0}", det0.confidence * 0.85, per_cam)
+        mask = self.diff_mask(img, self.reference)
+        self.last_mask = mask
+        changed = cv2.countNonZero(mask)
 
-        if det1 is not None and det0 is None:
-            return FusedDetection(det1.board_xy, f"single_{c1}", det1.confidence * 0.85, per_cam)
+        if changed > self.cfg.hand_motion_area:
+            self._settle_count = 0
+            self._last_mask = None
+            self.state = State.SETTLING
+            return None
 
-        # Both cameras detected a dart
-        p0 = np.array(det0.board_xy, dtype=np.float32)
-        p1 = np.array(det1.board_xy, dtype=np.float32)
-        dist = float(np.linalg.norm(p0 - p1))
+        if changed < self.cfg.min_area:
+            # idle: absorb slow lighting drift
+            cv2.accumulateWeighted(img, self.reference, self.cfg.background_alpha)
+            self.state = State.WAIT_THROW
+            self._settle_count = 0
+            self._last_mask = None
+            return None
 
-        if dist <= self.max_agreement_mm:
-            w0, w1 = det0.confidence, det1.confidence
-            fused_xy = (p0 * w0 + p1 * w1) / (w0 + w1)
-            combined_conf = min(1.0, (w0 + w1) / 1.5)
-            return FusedDetection(
-                board_xy=(float(fused_xy[0]), float(fused_xy[1])),
-                mode="fused_dual",
-                confidence=combined_conf,
-                per_camera=per_cam,
-            )
+        # something changed and is small enough: settle
+        if self._last_mask is not None:
+            delta = cv2.countNonZero(cv2.bitwise_xor(mask, self._last_mask))
+            stable = delta <= max(self.cfg.min_area, self.cfg.stable_pixel_tolerance * changed)
+            self._settle_count = self._settle_count + 1 if stable else 0
+        self._last_mask = mask
+        self.state = State.SETTLING
+        if self._settle_count < self.cfg.settle_frames:
+            return None
 
-        # Disagreement: select camera with cleaner elongation / lower occlusion
-        if det0.confidence >= det1.confidence:
-            return FusedDetection(det0.board_xy, f"conflict_{c0}", det0.confidence, per_cam)
-        return FusedDetection(det1.board_xy, f"conflict_{c1}", det1.confidence, per_cam)
+        det = self._find_dart(mask)
+        self._settle_count = 0
+        self._last_mask = None
+        if det is None:
+            # a stable change that isn't a dart (e.g. lighting); absorb it
+            self.reference = img.copy()
+            self.state = State.WAIT_THROW
+            return None
+        self.reference = img.copy()  # only the next dart will differ
+        self.darts_this_turn += 1
+        self.last_detection = det
+        self.state = State.WAIT_REMOVAL if self.darts_this_turn >= self.darts_per_turn else State.SCORED
+        if self.state == State.WAIT_REMOVAL:
+            self._settle_count = 0
+        return det
+
+    def after_scored(self) -> None:
+        """Called by App once the SCORED state has been displayed."""
+        if self.state == State.SCORED:
+            self.state = State.WAIT_THROW
+
+    # ---------- contour analysis ----------
+    def _find_dart(self, mask: np.ndarray) -> Optional[Detection]:
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        best: Optional[tuple[float, np.ndarray]] = None
+        for c in contours:
+            area = cv2.contourArea(c)
+            if not self.cfg.min_area <= area <= self.cfg.max_area:
+                continue
+            (_, _), (w, h), _ = cv2.minAreaRect(c)
+            if min(w, h) < 1:
+                continue
+            aspect = max(w, h) / min(w, h)
+            hull = cv2.contourArea(cv2.convexHull(c))
+            solidity = area / hull if hull else 0
+            if aspect < self.cfg.min_aspect_ratio or solidity < self.cfg.min_solidity:
+                continue
+            if best is None or area > best[0]:
+                best = (area, c)
+        if best is None:
+            return None
+        area, c = best
+        mom = cv2.moments(c)
+        cen = (mom["m10"] / mom["m00"], mom["m01"] / mom["m00"]) if mom["m00"] else tuple(c[0][0])
+        return Detection(estimate_tip(c, self.cfg.tip_method, self.cfg.camera_side), cen, c, area)
+
+
+def estimate_tip(contour: np.ndarray, method: str = "fitline", camera_side: str = "bottom") -> tuple[float, float]:
+    """Estimate the dart tip in raw image pixels.
+
+    Assumptions:
+      * ``centroid``: board-normal camera; dart appears as a dot. Least accurate.
+      * ``lowest``: camera mounted below/in front looking up at the board; the tip
+        is the point of the contour closest to ``camera_side`` of the image.
+      * ``fitline`` (default): fit a line along the dart barrel/flight and take the
+        extreme contour point along that line which lies toward ``camera_side``.
+        Darts lean away from the camera, so the tip (stuck in the board) is the
+        end nearest that edge. Works for side-mounted cameras with ``left``/``right``.
+    """
+    pts = contour.reshape(-1, 2).astype(np.float32)
+    side_vec = {"bottom": (0, 1), "top": (0, -1), "left": (-1, 0), "right": (1, 0)}[camera_side]
+    if method == "centroid":
+        m = pts.mean(axis=0)
+        return float(m[0]), float(m[1])
+    if method == "lowest":
+        i = int(np.argmax(pts @ np.array(side_vec, np.float32)))
+        return float(pts[i, 0]), float(pts[i, 1])
+    vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+    d = np.array([vx, vy], np.float32)
+    if d @ np.array(side_vec, np.float32) < 0:
+        d = -d
+    proj = (pts - np.array([x0, y0], np.float32)) @ d
+    p = np.array([x0, y0], np.float32) + d * proj.max()
+    return float(p[0]), float(p[1])

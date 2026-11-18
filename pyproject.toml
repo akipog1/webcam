@@ -1,6 +1,6 @@
 [project]
 name = "webcam-dart-scorer"
-version = "2.1.1"
+version = "2.4.0"
 requires-python = ">=3.10"
 dependencies = ["opencv-python>=4.8", "numpy>=1.24"]
 

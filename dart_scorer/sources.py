@@ -1,95 +1,125 @@
-import threading
+"""Frame sources (live camera, video file) and an optional recorder."""
+from __future__ import annotations
+
+import logging
 import time
-from typing import Dict, Optional, Tuple, Union
+from pathlib import Path
+from typing import Optional, Protocol
+
 import cv2
 import numpy as np
 
+from .config import AppConfig
 
-class ThreadedCameraStream:
-    """Continuously grabs frames in a daemon thread to avoid buffer lag."""
+log = logging.getLogger(__name__)
 
-    def __init__(
-        self,
-        source: Union[int, str],
-        width: int = 1280,
-        height: int = 720,
-        fps: int = 30,
-    ):
-        self.source = source
-        self.cap = cv2.VideoCapture(source)
 
-        if isinstance(source, int):
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            self.cap.set(cv2.CAP_PROP_FPS, fps)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+class FrameSource(Protocol):
+    size: tuple[int, int]   # (width, height) of frames returned by read()
+    fps: float
+    is_live: bool
 
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Failed to open video source: {source}")
+    def is_open(self) -> bool: ...
+    def read(self) -> Optional[np.ndarray]: ...
+    def release(self) -> None: ...
 
-        self.is_video_file = isinstance(source, str)
-        self._lock = threading.Lock()
-        self._frame: Optional[np.ndarray] = None
-        self._ret: bool = False
-        self._stopped = False
 
-        # Grab initial frame synchronously
-        self._ret, self._frame = self.cap.read()
+class Camera:
+    """VideoCapture wrapper with explicit resolution and reconnects."""
+    is_live = True
 
-        if not self.is_video_file:
-            self._thread = threading.Thread(target=self._update, daemon=True)
-            self._thread.start()
+    def __init__(self, cfg: AppConfig, index: Optional[int] = None) -> None:
+        self.cfg = cfg
+        self.index = cfg.camera if index is None else index
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.size = (cfg.width, cfg.height)
+        self.fps = 30.0
+        self.open()
 
-    def _update(self) -> None:
-        while not self._stopped:
-            ret, frame = self.cap.read()
-            with self._lock:
-                self._ret = ret
-                if ret:
-                    self._frame = frame
-            if not ret:
-                time.sleep(0.01)
+    def open(self) -> bool:
+        if self.cap is not None:
+            self.cap.release()
+        self.cap = cv2.VideoCapture(self.index)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.height)
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        if fps and fps > 1:
+            self.fps = float(fps)
+        return self.cap.isOpened()
 
-    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        if self.is_video_file:
-            return self.cap.read()
-        with self._lock:
-            if not self._ret or self._frame is None:
-                return False, None
-            return True, self._frame.copy()
+    def is_open(self) -> bool:
+        return self.cap is not None and self.cap.isOpened()
+
+    def read(self) -> Optional[np.ndarray]:
+        for attempt in range(self.cfg.max_reconnect_attempts):
+            ok, frame = self.cap.read()
+            if ok and frame is not None:
+                if (frame.shape[1], frame.shape[0]) != self.size:
+                    frame = cv2.resize(frame, self.size)
+                return frame
+            log.warning("camera read failed (attempt %d/%d); reconnecting",
+                        attempt + 1, self.cfg.max_reconnect_attempts)
+            time.sleep(self.cfg.reconnect_delay)
+            if not self.open():
+                log.error("could not reopen camera %d", self.index)
+        return None
 
     def release(self) -> None:
-        self._stopped = True
-        if not self.is_video_file and hasattr(self, "_thread"):
-            self._thread.join(timeout=1.0)
+        if self.cap is not None:
+            self.cap.release()
+
+
+class VideoFile:
+    """Replays a recorded clip at its native resolution. ``read`` returns None at the end."""
+    is_live = False
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.cap = cv2.VideoCapture(path)
+        w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.size = (w, h)
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.fps = float(fps) if fps and fps > 1 else 30.0
+
+    def is_open(self) -> bool:
+        return self.cap.isOpened()
+
+    def read(self) -> Optional[np.ndarray]:
+        ok, frame = self.cap.read()
+        return frame if ok and frame is not None else None
+
+    def rewind(self) -> None:
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    def release(self) -> None:
         self.cap.release()
 
 
-class DualFrameSource:
-    """Manages one or two synchronized camera streams."""
+class Recorder:
+    """Writes the raw frames the detector sees, so a session can be replayed offline."""
 
-    def __init__(
-        self,
-        sources: Dict[str, Union[int, str]],
-        width: int = 1280,
-        height: int = 720,
-        fps: int = 30,
-    ):
-        self.streams: Dict[str, ThreadedCameraStream] = {
-            cam_id: ThreadedCameraStream(src, width=width, height=height, fps=fps)
-            for cam_id, src in sources.items()
-        }
+    def __init__(self, path: str, fps: float, size: tuple[int, int]) -> None:
+        codec = "MJPG" if Path(path).suffix.lower() == ".avi" else "mp4v"
+        self.writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*codec), fps, size)
+        self.size = size
+        if not self.writer.isOpened():
+            raise OSError(f"cannot open {path!r} for recording")
+        log.info("recording to %s (%dx%d @ %.0f fps)", path, size[0], size[1], fps)
 
-    def read_all(self) -> Tuple[bool, Dict[str, np.ndarray]]:
-        frames: Dict[str, np.ndarray] = {}
-        for cam_id, stream in self.streams.items():
-            ret, frame = stream.read()
-            if not ret or frame is None:
-                return False, {}
-            frames[cam_id] = frame
-        return True, frames
+    def write(self, frame: np.ndarray) -> None:
+        if (frame.shape[1], frame.shape[0]) != self.size:
+            frame = cv2.resize(frame, self.size)
+        self.writer.write(frame)
 
     def release(self) -> None:
-        for stream in self.streams.values():
-            stream.release()
+        self.writer.release()
+
+
+def open_source(cfg: AppConfig) -> FrameSource:
+    return VideoFile(cfg.video) if cfg.video else Camera(cfg)
+
+
+def open_source2(cfg: AppConfig) -> FrameSource:
+    """The second camera/clip (only call when ``cfg.dual``)."""
+    return VideoFile(cfg.video2) if cfg.video2 else Camera(cfg, cfg.camera2)

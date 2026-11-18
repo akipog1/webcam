@@ -61,15 +61,6 @@ def score_point(x: float, y: float) -> Score:
     return score_polar(r, angle_clockwise_from_top(x, y))
 
 
-def score_board_mm(x_mm: float, y_mm: float) -> Score:
-    """Score board-plane millimetre coordinates (origin = bull, y down, as
-    produced by ``MultiCamCalibrator.pixel_to_board``)."""
-    # Work in mm for the radius so exact wire distances are not perturbed by
-    # the canvas-offset round trip.
-    angle = math.degrees(math.atan2(x_mm, -y_mm)) % 360.0
-    return score_polar(math.hypot(x_mm, y_mm) * board.PX_PER_MM, angle)
-
-
 def parse_score(text: str) -> Score:
     """Parse a manual override like ``T20``, ``D16``, ``S5``, ``25``, ``50``/``B`` (bull), ``0``."""
     t = text.strip().upper()
