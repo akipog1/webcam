@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from dart_scorer.config import DetectorConfig
 from dart_scorer.diagnostics import _quality, _shape_metrics, render_dashboard_frame
@@ -34,7 +35,7 @@ def test_dashboard_keeps_aspect_ratio_for_4x3_clip():
 
 
 def test_bad_baseline_frame_rejected(tmp_path):
-    import cv2, pytest
+    import cv2
     from dart_scorer.diagnostics import run_diagnostics
     clip = str(tmp_path / "c.mp4")
     w = cv2.VideoWriter(clip, cv2.VideoWriter_fourcc(*"mp4v"), 30, (1280, 720))

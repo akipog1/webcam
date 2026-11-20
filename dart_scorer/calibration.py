@@ -47,8 +47,15 @@ class Calibrator:
         return float(np.linalg.norm(proj - d, axis=1).mean())
 
     def set_matrix(self, H: np.ndarray) -> None:
-        self.H = H
-        self.H_inv = np.linalg.inv(H)
+        matrix = np.asarray(H, dtype=np.float64)
+        if matrix.shape != (3, 3):
+            raise ValueError(f"homography must be 3x3, got {matrix.shape}")
+        if not np.all(np.isfinite(matrix)):
+            raise ValueError("homography contains non-finite values")
+        if abs(np.linalg.det(matrix)) < 1e-12:
+            raise ValueError("homography is singular")
+        self.H = matrix
+        self.H_inv = np.linalg.inv(matrix)
 
     def to_board(self, pt: tuple[float, float]) -> tuple[float, float]:
         p = cv2.perspectiveTransform(np.array([[pt]], np.float32), self.H)[0, 0]

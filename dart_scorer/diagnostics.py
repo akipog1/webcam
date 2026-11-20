@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 
 from .calibration import Calibrator
-from .config import DetectorConfig
+from .config import DetectorConfig, parse_bool
 from .detector import DartDetector
 from .scorer import score_point
 from .sources import VideoFile
@@ -209,7 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--baseline-frame", type=int, default=5)
     ap.add_argument("--show", action="store_true", help="also display the dashboard while processing")
     for f in fields(DetectorConfig):
-        ap.add_argument(f"--{f.name.replace('_','-')}", type=type(f.default), default=f.default)
+        ap.add_argument(f"--{f.name.replace('_','-')}",
+                        type=parse_bool if f.type in ("bool", bool) else type(f.default),
+                        default=f.default)
     a = ap.parse_args(argv)
     cfg = DetectorConfig(**{f.name: getattr(a, f.name) for f in fields(DetectorConfig)})
     return run_diagnostics(a.video, a.calibration, a.output, a.csv, a.baseline_frame, cfg, a.show)

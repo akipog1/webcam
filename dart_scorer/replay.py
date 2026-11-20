@@ -21,7 +21,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 
 from .calibration import Calibrator
-from .config import DetectorConfig
+from .config import DetectorConfig, parse_bool
 from .detector import DartDetector
 from .fusion import DetectionPairer, fuse
 from .scorer import Score, parse_score, score_point
@@ -68,6 +68,8 @@ def parse_expected(text: str) -> list[Score]:
 def replay(frames: Iterable[np.ndarray], cal: Calibrator, cfg: DetectorConfig,
            expected: Sequence[Score] = (), baseline_frame: int = 5) -> ReplayResult:
     """Run frames through the pipeline. Detections are matched to ``expected`` by order."""
+    if baseline_frame < 1:
+        raise ValueError(f"--baseline-frame must be >= 1 (got {baseline_frame})")
     det = DartDetector(cfg, darts_per_turn=3)
     got: list[tuple[Score, int, tuple[float, float]]] = []
     n = 0
@@ -80,6 +82,8 @@ def replay(frames: Iterable[np.ndarray], cal: Calibrator, cfg: DetectorConfig,
         if d is not None:
             flat = cal.to_board(d.tip)
             got.append((score_point(*flat), n, flat))
+    if n < baseline_frame:
+        raise ValueError(f"--baseline-frame {baseline_frame} is past the end of the clip ({n} frames)")
     rows = []
     for i, (e, g) in enumerate(zip_longest(expected, got), start=1):
         rows.append(Row(i, e, g[0] if g else None, g[1] if g else None, g[2] if g else None))
@@ -92,6 +96,8 @@ def replay_dual(frames1: Iterable[np.ndarray], frames2: Iterable[np.ndarray],
                 window: int = 45, min_angle: float = 20.0, cfg2: Optional[DetectorConfig] = None
                 ) -> ReplayResult:
     """Two-camera replay: both clips are stepped in lock-step and detections fused."""
+    if baseline_frame < 1:
+        raise ValueError(f"--baseline-frame must be >= 1 (got {baseline_frame})")
     d1, d2 = DartDetector(cfg, darts_per_turn=3), DartDetector(cfg2 or cfg, darts_per_turn=3)
     pairer = DetectionPairer(window)
     got: list[tuple[Score, int, tuple[float, float]]] = []
@@ -116,6 +122,8 @@ def replay_dual(frames1: Iterable[np.ndarray], frames2: Iterable[np.ndarray],
                 ready += pairer.push(cam, d)
         ready += pairer.tick()
         emit(ready)
+    if n < baseline_frame:
+        raise ValueError(f"--baseline-frame {baseline_frame} is past the end of the clips ({n} frames)")
     for cam, (_, det) in list(pairer._pending.items()):   # clip ended with a lone detection
         emit([(det, None) if cam == 1 else (None, det)])
     rows = []
@@ -158,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="exit non-zero below this fraction correct (default 1.0)")
     for f in fields(DetectorConfig):
         ap.add_argument(f"--{f.name.replace('_', '-')}",
-                        type=(lambda s: s.lower() in ("1", "true", "yes")) if f.type in ("bool", bool) else type(f.default),
+                        type=parse_bool if f.type in ("bool", bool) else type(f.default),
                         default=f.default)
     a = ap.parse_args(argv)
     cfg = DetectorConfig(**{f.name: getattr(a, f.name) for f in fields(DetectorConfig)})
@@ -175,22 +183,33 @@ def main(argv: list[str] | None = None) -> int:
     if a.expect:
         with open(a.expect) as fh:
             expected = parse_expected(fh.read())
-    if a.video2:
-        vf2 = VideoFile(a.video2)
-        cal2 = Calibrator(a.calibration2)
-        if not vf2.is_open():
-            print(f"cannot open {a.video2}", file=sys.stderr)
-            return 2
-        if not cal2.load(vf2.size):
-            print(f"no usable calibration at {a.calibration2} for {vf2.size[0]}x{vf2.size[1]} video", file=sys.stderr)
-            return 2
-        import dataclasses
-        res = replay_dual(_video_frames(vf), _video_frames(vf2), cal, cal2, cfg, expected,
-                          a.baseline_frame, a.fuse_window, a.min_cross_angle,
-                          dataclasses.replace(cfg, camera_side=a.camera_side2))
-        vf2.release()
-    else:
-        res = replay(_video_frames(vf), cal, cfg, expected, a.baseline_frame)
+    vf2 = None
+    try:
+        if a.video2:
+            vf2 = VideoFile(a.video2)
+            cal2 = Calibrator(a.calibration2)
+            if not vf2.is_open():
+                print(f"cannot open {a.video2}", file=sys.stderr)
+                vf.release()
+                return 2
+            if not cal2.load(vf2.size):
+                print(f"no usable calibration at {a.calibration2} for {vf2.size[0]}x{vf2.size[1]} video", file=sys.stderr)
+                vf.release()
+                vf2.release()
+                return 2
+            import dataclasses
+            res = replay_dual(_video_frames(vf), _video_frames(vf2), cal, cal2, cfg, expected,
+                              a.baseline_frame, a.fuse_window, a.min_cross_angle,
+                              dataclasses.replace(cfg, camera_side=a.camera_side2))
+            vf2.release()
+        else:
+            res = replay(_video_frames(vf), cal, cfg, expected, a.baseline_frame)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        vf.release()
+        if vf2 is not None:
+            vf2.release()
+        return 2
     vf.release()
     print(format_table(res))
     if not a.expect:

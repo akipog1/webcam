@@ -5,7 +5,7 @@ import pytest
 
 from dart_scorer import board
 from dart_scorer.calibration import Calibrator
-from dart_scorer.config import DetectorConfig, parse_args
+from dart_scorer.config import DetectorConfig, parse_args, parse_bool
 from dart_scorer.controller import Action, Controller, ThrowLogger
 from dart_scorer.detector import DartDetector, State
 from dart_scorer.game import GameState
@@ -161,3 +161,12 @@ def test_parse_args_defaults_and_overrides():
     assert cfg.detector.diff_threshold == 40 and cfg.detector.shadow_v_only is False
     assert cfg.detector.tip_method == "lowest" and cfg.detector.camera_side == "left"
     assert cfg.video == "a.mp4" and cfg.record == "b.avi"
+
+
+def test_parse_bool_explicit_values():
+    assert parse_bool("false") is False
+    assert parse_bool("0") is False
+    assert parse_bool("true") is True
+    assert parse_bool("yes") is True
+    with pytest.raises(Exception):
+        parse_bool("maybe")

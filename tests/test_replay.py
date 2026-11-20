@@ -41,6 +41,14 @@ def test_replay_matches_expected(scene):
     assert "4/4 correct" in format_table(res)
 
 
+def test_replay_rejects_bad_baseline(scene):
+    cal, frames = scene
+    with pytest.raises(ValueError, match="baseline-frame"):
+        replay(frames, cal, cfg(), baseline_frame=0)
+    with pytest.raises(ValueError, match="past the end"):
+        replay(frames, cal, cfg(), baseline_frame=len(frames) + 1)
+
+
 def test_replay_flags_wrong_miss_and_extra(scene):
     cal, frames = scene
     res = replay(frames, cal, cfg(), parse_expected("T20 D1 S5"), baseline_frame=5)
@@ -102,3 +110,5 @@ def test_cli_end_to_end(tmp_path, scene, capsys):
     assert main([str(tmp_path / "none.avi"), "--calibration", str(cal.path)]) == 2
     cal.frame_size = (640, 480); cal.save()                    # wrong size calibration
     assert main(common) == 2
+    cal.frame_size = (W, H); cal.save()
+    assert main(common + ["--baseline-frame", "0"]) == 2

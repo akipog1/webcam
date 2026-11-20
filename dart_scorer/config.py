@@ -59,6 +59,18 @@ class AppConfig:
         return self.camera2 >= 0 or bool(self.video2)
 
 
+def parse_bool(value: str | bool) -> bool:
+    """Parse a boolean command-line value explicitly."""
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"invalid boolean value: {value!r}")
+
+
 def parse_args(argv: list[str] | None = None) -> AppConfig:
     """Build an AppConfig from command-line arguments."""
     p = argparse.ArgumentParser(description="Webcam dart scorer")
@@ -86,7 +98,7 @@ def parse_args(argv: list[str] | None = None) -> AppConfig:
     p.add_argument("--min-cross-angle", type=float, default=20.0)
     for f in fields(DetectorConfig):
         p.add_argument(f"--{f.name.replace('_', '-')}",
-                       type=(lambda s: s.lower() in ("1", "true", "yes")) if f.type in ("bool", bool) else type(f.default),
+                       type=parse_bool if f.type in ("bool", bool) else type(f.default),
                        default=f.default)
     a = p.parse_args(argv)
     det = DetectorConfig(**{f.name: getattr(a, f.name) for f in fields(DetectorConfig)})

@@ -1,6 +1,8 @@
 """End-to-end test on synthetic images: render a board and darts through a
 perspective camera, calibrate from simulated clicks, then run detector ->
 homography -> scorer -> game exactly as the app does (minus the GUI)."""
+import json
+
 import numpy as np
 import pytest
 
@@ -127,3 +129,22 @@ def test_calibration_file_roundtrip_and_size_check(world, tmp_path):
     wrong = Calibrator(str(cal.path))
     assert not wrong.load((640, 480))
     assert wrong.H is None
+
+
+def test_calibration_rejects_malformed_homography(tmp_path):
+    cal = Calibrator(str(tmp_path / "cal.json"))
+    for bad in (
+        np.zeros((2, 3)),
+        np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=float),
+        np.array([[1, 0, 0], [0, float("nan"), 0], [0, 0, 1]], dtype=float),
+    ):
+        with pytest.raises(ValueError):
+            cal.set_matrix(bad)
+
+    cal.path.write_text(json.dumps({
+        "canvas": board.CANVAS_SIZE,
+        "frame": [W, H],
+        "H": [[1, 0, 0], [0, 1, 0], [0, 0, 0]],
+    }))
+    assert not cal.load((W, H))
+    assert cal.H is None
