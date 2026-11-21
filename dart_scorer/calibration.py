@@ -36,26 +36,63 @@ class Calibrator:
         """Fit the homography; returns mean reprojection error in canvas px."""
         if len(src) < 4:
             raise ValueError("need at least 4 points")
+        if len(src) != len(dst):
+            raise ValueError("source and target point counts differ")
         s = np.array(src, np.float32)
         d = np.array(dst, np.float32)
-        method = cv2.RANSAC if len(src) > 4 else 0
-        H, _ = cv2.findHomography(s, d, method, 8.0)
-        if H is None:
-            raise ValueError("homography failed - points collinear?")
-        self.set_matrix(H)
-        proj = cv2.perspectiveTransform(s.reshape(-1, 1, 2), H).reshape(-1, 2)
-        return float(np.linalg.norm(proj - d, axis=1).mean())
+        if s.shape != d.shape or s.ndim != 2 or s.shape[1] != 2:
+            raise ValueError("points must be (x, y) pairs")
+        if not np.all(np.isfinite(s)) or not np.all(np.isfinite(d)):
+            raise ValueError("points contain non-finite values")
 
-    def set_matrix(self, H: np.ndarray) -> None:
+        # Degenerate clicks should fail explicitly instead of producing a
+        # nearly-zero but unusable homography.
+        if np.unique(s, axis=0).shape[0] != len(s):
+            raise ValueError("calibration points contain duplicates")
+        if len(s) >= 3:
+            area = abs(cv2.contourArea(cv2.convexHull(s)))
+            if area < 100.0:
+                raise ValueError("calibration points are collinear or too close together")
+
+        method = cv2.RANSAC if len(src) > 4 else 0
+        try:
+            H, _ = cv2.findHomography(s, d, method, 8.0)
+        except cv2.error as e:
+            raise ValueError("homography calculation failed") from e
+        if H is None:
+            raise ValueError("homography failed - points are degenerate")
+
+        # Validate the candidate before changing the live calibration.
+        candidate = self._validated_matrix(H)
+        proj = cv2.perspectiveTransform(s.reshape(-1, 1, 2), candidate).reshape(-1, 2)
+        errors = np.linalg.norm(proj - d, axis=1)
+        err = float(errors.mean())
+        if err > 25.0 or float(errors.max()) > 50.0:
+            raise ValueError(f"click geometry is inconsistent (mean error {err:.1f} px)")
+        self.H = candidate
+        self.H_inv = np.linalg.inv(candidate)
+        return err
+
+    def _validated_matrix(self, H: np.ndarray) -> np.ndarray:
         matrix = np.asarray(H, dtype=np.float64)
         if matrix.shape != (3, 3):
             raise ValueError(f"homography must be 3x3, got {matrix.shape}")
         if not np.all(np.isfinite(matrix)):
             raise ValueError("homography contains non-finite values")
-        if abs(np.linalg.det(matrix)) < 1e-12:
+        singular_values = np.linalg.svd(matrix, compute_uv=False)
+        if singular_values[-1] <= singular_values[0] * 1e-10:
             raise ValueError("homography is singular")
+        try:
+            inverse = np.linalg.inv(matrix)
+        except np.linalg.LinAlgError as e:
+            raise ValueError("homography is singular") from e
+        return matrix
+
+    def set_matrix(self, H: np.ndarray) -> None:
+        matrix = self._validated_matrix(H)
+        inverse = np.linalg.inv(matrix)
         self.H = matrix
-        self.H_inv = np.linalg.inv(matrix)
+        self.H_inv = inverse
 
     def to_board(self, pt: tuple[float, float]) -> tuple[float, float]:
         p = cv2.perspectiveTransform(np.array([[pt]], np.float32), self.H)[0, 0]
@@ -122,7 +159,11 @@ class Calibrator:
             log.info("auto-calibration found no confident fit (%s)",
                      "nothing board-like" if res is None else f"confidence {res.confidence:.2f}")
             return None
-        self.set_matrix(res.H)
+        try:
+            self.set_matrix(res.H)
+        except (ValueError, np.linalg.LinAlgError) as e:
+            log.warning("auto-calibration produced an invalid homography: %s", e)
+            return None
         self.frame_size = (frame.shape[1], frame.shape[0])
         log.info("auto-calibration: confidence %.2f, mean edge distance %.1f px", res.confidence, res.mean_edge_px)
         return res.confidence
@@ -192,8 +233,13 @@ class Calibrator:
                 cv2.circle(disp, q, 5, (0, 0, 255), -1)
                 cv2.putText(disp, str(i + 1), (q[0] + 8, q[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             if len(clicks) >= 4:
-                err = self.fit(clicks, [self.targets[n] for n in names[:len(clicks)]])
-                self.draw_overlay(disp)
+                try:
+                    err = self.fit(clicks, [self.targets[n] for n in names[:len(clicks)]])
+                    self.draw_overlay(disp)
+                except (ValueError, cv2.error, np.linalg.LinAlgError) as e:
+                    err = None
+                    note = f"Invalid calibration: {e}"
+                    log.warning("%s", note)
             msg = (f"Click: {names[len(clicks)]}" if len(clicks) < len(names) else "All points set")
             cv2.putText(disp, note or msg, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
             footer = "Enter=accept (>=4 pts)  a=auto  u=undo  r=reset  q=quit"
@@ -203,6 +249,12 @@ class Calibrator:
             cv2.imshow(win, disp)
             k = cv2.waitKey(1) & 0xFF
             if k in (13, 10) and len(clicks) >= 4:
+                try:
+                    self.fit(clicks, [self.targets[n] for n in names[:len(clicks)]])
+                except (ValueError, cv2.error, np.linalg.LinAlgError) as e:
+                    note = f"Invalid calibration: {e} - adjust the points"
+                    log.warning("%s", note)
+                    continue
                 cv2.destroyWindow(win)
                 self.save()
                 return True
