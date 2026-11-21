@@ -11,6 +11,7 @@ Fallbacks (``FusedTip.method``): ``intersection`` -> ``average`` of both
 single-camera tips (lines unusable / nearly parallel) -> ``cam1`` / ``cam2``
 (only one camera saw the dart).
 """
+
 from __future__ import annotations
 
 import math
@@ -28,15 +29,15 @@ Point = tuple[float, float]
 # a line in the board plane: (point, unit direction)
 Line = tuple[np.ndarray, np.ndarray]
 
-MIN_ELONGATION = 2.5          # sqrt(major/minor variance) needed to trust a contour's axis
-MAX_RADIUS_PX = board.DOUBLE_OUTER_PX * 1.15   # intersections farther out are rejected
+MIN_ELONGATION = 2.5  # sqrt(major/minor variance) needed to trust a contour's axis
+MAX_RADIUS_PX = board.DOUBLE_OUTER_PX * 1.15  # intersections farther out are rejected
 
 
 @dataclass
 class FusedTip:
-    flat: Point            # board-canvas coordinates
-    method: str            # intersection | average | cam1 | cam2
-    raw: Point             # camera pixel of the (first available) single-camera tip, for logging
+    flat: Point  # board-canvas coordinates
+    method: str  # intersection | average | cam1 | cam2
+    raw: Point  # camera pixel of the (first available) single-camera tip, for logging
 
 
 def board_line(det: Detection, cal: Calibrator, span: float = 60.0) -> Optional[Line]:
@@ -46,7 +47,7 @@ def board_line(det: Detection, cal: Calibrator, span: float = 60.0) -> Optional[
         return None
     centre = pts.mean(axis=0)
     cov = np.cov((pts - centre).T)
-    evals, evecs = np.linalg.eigh(cov)           # ascending
+    evals, evecs = np.linalg.eigh(cov)  # ascending
     if evals[0] <= 1e-9 or math.sqrt(evals[1] / evals[0]) < MIN_ELONGATION:
         return None
     d = evecs[:, 1]
@@ -70,9 +71,13 @@ def intersect(l1: Line, l2: Line, min_angle_deg: float) -> Optional[Point]:
     return float(q[0]), float(q[1])
 
 
-def fuse(d1: Optional[Detection], cal1: Calibrator,
-         d2: Optional[Detection], cal2: Calibrator,
-         min_angle_deg: float = 20.0) -> Optional[FusedTip]:
+def fuse(
+    d1: Optional[Detection],
+    cal1: Calibrator,
+    d2: Optional[Detection],
+    cal2: Calibrator,
+    min_angle_deg: float = 20.0,
+) -> Optional[FusedTip]:
     """Combine up to two detections of the same dart into one board position."""
     if d1 is None and d2 is None:
         return None
@@ -83,7 +88,10 @@ def fuse(d1: Optional[Detection], cal1: Calibrator,
     l1, l2 = board_line(d1, cal1), board_line(d2, cal2)
     if l1 is not None and l2 is not None:
         p = intersect(l1, l2, min_angle_deg)
-        if p is not None and math.hypot(p[0] - board.CENTER[0], p[1] - board.CENTER[1]) <= MAX_RADIUS_PX:
+        if (
+            p is not None
+            and math.hypot(p[0] - board.CENTER[0], p[1] - board.CENTER[1]) <= MAX_RADIUS_PX
+        ):
             return FusedTip(p, "intersection", d1.tip)
     a, b = cal1.to_board(d1.tip), cal2.to_board(d2.tip)
     return FusedTip(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0), "average", d1.tip)
@@ -101,13 +109,15 @@ class DetectionPairer:
         self._pending: dict[int, tuple[int, Detection]] = {}
         self._frame = 0
 
-    def push(self, cam: int, det: Detection) -> list[tuple[Optional[Detection], Optional[Detection]]]:
+    def push(
+        self, cam: int, det: Detection
+    ) -> list[tuple[Optional[Detection], Optional[Detection]]]:
         """Register a detection from camera 1 or 2; returns pairs that are ready."""
         other = 2 if cam == 1 else 1
         if other in self._pending:
             _, od = self._pending.pop(other)
             return [(det, od) if cam == 1 else (od, det)]
-        if cam in self._pending:                    # same camera twice: flush the old one alone
+        if cam in self._pending:  # same camera twice: flush the old one alone
             _, old = self._pending.pop(cam)
             out = [(old, None) if cam == 1 else (None, old)]
         else:

@@ -1,4 +1,5 @@
 """X01 game logic (301/501/701), double-out, busts, averages, multi-player."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ class TurnResult:
 @dataclass
 class GameState:
     """Tracks scores. Busted turns revert to the turn-start score."""
+
     start: int = 501
     double_out: bool = True
     players: list[Player] = field(default_factory=list)
@@ -38,8 +40,7 @@ class GameState:
 
     @classmethod
     def new(cls, names: list[str], start: int = 501, double_out: bool = True) -> "GameState":
-        g = cls(start=start, double_out=double_out,
-                players=[Player(n, start) for n in names])
+        g = cls(start=start, double_out=double_out, players=[Player(n, start) for n in names])
         g.turn_start_remaining = start
         return g
 
@@ -59,7 +60,11 @@ class GameState:
         result = TurnResult("ok", "")
         for s in self.turn_darts:
             new = rem - s.points
-            if new < 0 or (self.double_out and new == 1) or (new == 0 and self.double_out and not s.is_double):
+            if (
+                new < 0
+                or (self.double_out and new == 1)
+                or (new == 0 and self.double_out and not s.is_double)
+            ):
                 self.busted = True
                 rem = self.turn_start_remaining
                 result = TurnResult("bust", f"BUST - {p.name} stays on {rem}")

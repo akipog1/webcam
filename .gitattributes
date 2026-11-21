@@ -1,2 +1,29 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Media, data exports, and archives are binary assets.
+*.mp4 binary
+*.m4v binary
+*.avi binary
+*.mov binary
+*.mkv binary
+*.webm binary
+*.mpg binary
+*.mpeg binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.tif binary
+*.tiff binary
+*.webp binary
+*.heic binary
+*.csv binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.bz2 binary
+*.xz binary
+*.7z binary
+*.rar binary

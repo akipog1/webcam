@@ -3,13 +3,24 @@
 Real-time steel-tip dart scoring with one webcam, OpenCV and numpy.
 
 ## Setup
+For development, install the project and its test/lint tools in editable mode:
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m dart_scorer --camera 0 --width 1280 --height 720 --players Alice Bob --game 501
-python -m pytest            # 110 tests
+python -m pip install -e ".[test,dev]"
 ```
-Python 3.10+. Useful flags: `--debug`, `--recalibrate`, `--no-double-out`, `--game 301`,
+
+For a runtime-only installation from the dependency list:
+```bash
+python -m pip install -r requirements.txt
+```
+
+Then launch the scorer:
+```bash
+python -m dart_scorer --camera 0 --width 1280 --height 720 --players Alice Bob --game 501
+```
+To run tests and lint checks in the development environment, use `python -m pytest`,
+`python -m ruff check .`, and `python -m ruff format --check .`. Python 3.10+ is required.
+Useful flags: `--debug`, `--recalibrate`, `--no-double-out`, `--game 301`,
 plus every detector setting, e.g. `--diff-threshold 25 --settle-frames 20 --tip-method lowest --camera-side left`.
 
 ## Calibration

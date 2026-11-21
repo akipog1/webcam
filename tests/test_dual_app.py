@@ -1,4 +1,5 @@
 """Two-camera App loop on synthetic clips: both calibrations, fused scoring, undo, recording."""
+
 import cv2
 import pytest
 
@@ -50,10 +51,16 @@ def _run(rig, tmp_path, monkeypatch, keys=None, **over):
     for name in ("namedWindow", "setMouseCallback", "imshow", "destroyAllWindows"):
         monkeypatch.setattr(cv2, name, lambda *a, **k: None)
     monkeypatch.setattr(cv2, "waitKey", wait_key)
-    cfg = AppConfig(video=rig[1][0], calibration_file=rig[1][1],
-                    video2=rig[2][0], calibration_file2=rig[2][1],
-                    log_file=str(tmp_path / "t.csv"), players=["A"],
-                    detector=DetectorConfig(settle_frames=5), **over)
+    cfg = AppConfig(
+        video=rig[1][0],
+        calibration_file=rig[1][1],
+        video2=rig[2][0],
+        calibration_file2=rig[2][1],
+        log_file=str(tmp_path / "t.csv"),
+        players=["A"],
+        detector=DetectorConfig(settle_frames=5),
+        **over,
+    )
     a = app_mod.App(cfg)
     a.run()
     return a, cfg
@@ -84,9 +91,23 @@ def test_single_camera_config_unchanged(rig, tmp_path, monkeypatch):
 
 def test_dual_replay_cli(rig, tmp_path, capsys):
     from dart_scorer.replay import main
+
     exp = tmp_path / "e.txt"
     exp.write_text("T20 D16 S5\n")
-    code = main([rig[1][0], "--video2", rig[2][0], "--calibration", rig[1][1],
-                 "--calibration2", rig[2][1], "--expect", str(exp), "--settle-frames", "5"])
+    code = main(
+        [
+            rig[1][0],
+            "--video2",
+            rig[2][0],
+            "--calibration",
+            rig[1][1],
+            "--calibration2",
+            rig[2][1],
+            "--expect",
+            str(exp),
+            "--settle-frames",
+            "5",
+        ]
+    )
     assert code == 0
     assert "3/3 correct" in capsys.readouterr().out

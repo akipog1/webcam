@@ -14,15 +14,15 @@ def scene():
     _, h = ground_truth()
     cal, _ = calibrated(h)
     empty = render_board(h)
-    frames = [empty.copy() for _ in range(8)]       # empty board; baseline at frame 5
+    frames = [empty.copy() for _ in range(8)]  # empty board; baseline at frame 5
     cur = empty.copy()
     for _, aim in AIMS:
         add_dart(cur, to_cam(h, aim))
         frames += [cur.copy() for _ in range(15)]
-    frames += [empty.copy() for _ in range(12)]     # darts pulled
+    frames += [empty.copy() for _ in range(12)]  # darts pulled
     cur = empty.copy()
     add_dart(cur, to_cam(h, board.polar_to_canvas(30 * board.PX_PER_MM, 200)))
-    frames += [cur.copy() for _ in range(15)]       # first dart of next turn
+    frames += [cur.copy() for _ in range(15)]  # first dart of next turn
     return cal, frames
 
 
@@ -69,7 +69,7 @@ def test_recorder_and_videofile_roundtrip(tmp_path, scene):
         rec = Recorder(path, 30, (W, H))
         for f in frames[:10]:
             rec.write(f)
-        rec.write(cv2.resize(frames[0], (320, 240)))   # wrong size is resized, not dropped
+        rec.write(cv2.resize(frames[0], (320, 240)))  # wrong size is resized, not dropped
         rec.release()
         vf = VideoFile(path)
         assert vf.is_open() and vf.size == (W, H) and not vf.is_live
@@ -105,10 +105,12 @@ def test_cli_end_to_end(tmp_path, scene, capsys):
     exp.write_text("T20 D16 S5 T1\n")
     assert main(common + ["--expect", str(exp)]) == 1
     assert main(common + ["--expect", str(exp), "--min-accuracy", "0.75"]) == 0
-    assert main(common) == 0                                   # no --expect: just list detections
+    assert main(common) == 0  # no --expect: just list detections
     assert main([clip, "--calibration", str(tmp_path / "missing.json")]) == 2
     assert main([str(tmp_path / "none.avi"), "--calibration", str(cal.path)]) == 2
-    cal.frame_size = (640, 480); cal.save()                    # wrong size calibration
+    cal.frame_size = (640, 480)
+    cal.save()  # wrong size calibration
     assert main(common) == 2
-    cal.frame_size = (W, H); cal.save()
+    cal.frame_size = (W, H)
+    cal.save()
     assert main(common + ["--baseline-frame", "0"]) == 2

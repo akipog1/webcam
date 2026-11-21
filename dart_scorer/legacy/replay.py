@@ -10,6 +10,7 @@ comments allowed (``T20 D16 S5 50 25 0``). Compare by parsed score, so ``5`` == 
 The clip must start with an empty board (the baseline is taken at
 ``--baseline-frame``); the detector re-arms itself when darts are pulled.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,8 +38,11 @@ class Row:
 
     @property
     def ok(self) -> bool:
-        return (self.expected is not None and self.got is not None
-                and (self.expected.label, self.expected.points) == (self.got.label, self.got.points))
+        return (
+            self.expected is not None
+            and self.got is not None
+            and (self.expected.label, self.expected.points) == (self.got.label, self.got.points)
+        )
 
 
 @dataclass
@@ -64,8 +68,13 @@ def parse_expected(text: str) -> list[Score]:
     return out
 
 
-def replay(frames: Iterable[np.ndarray], cal: Calibrator, cfg: DetectorConfig,
-           expected: Sequence[Score] = (), baseline_frame: int = 5) -> ReplayResult:
+def replay(
+    frames: Iterable[np.ndarray],
+    cal: Calibrator,
+    cfg: DetectorConfig,
+    expected: Sequence[Score] = (),
+    baseline_frame: int = 5,
+) -> ReplayResult:
     """Run frames through the pipeline. Detections are matched to ``expected`` by order."""
     det = DartDetector(cfg, darts_per_turn=3)
     got: list[tuple[Score, int, tuple[float, float]]] = []
@@ -91,7 +100,11 @@ def format_table(res: ReplayResult) -> str:
         e = r.expected.label if r.expected else "-"
         g = r.got.label if r.got else "(missed)"
         pos = f"{r.flat[0]:.0f}, {r.flat[1]:.0f}" if r.flat else ""
-        verdict = "ok" if r.ok else ("EXTRA" if r.expected is None else "MISS" if r.got is None else "WRONG")
+        verdict = (
+            "ok"
+            if r.ok
+            else ("EXTRA" if r.expected is None else "MISS" if r.got is None else "WRONG")
+        )
         lines.append(f"{r.index:>3}  {e:<10} {g:<10} {r.frame or '':>6}  {pos:<14} {verdict}")
     n = sum(r.expected is not None for r in res.rows)
     hit = sum(r.ok for r in res.rows)
@@ -110,12 +123,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expect", help="file with the scores in throw order")
     ap.add_argument("--calibration", default="calibration.json")
     ap.add_argument("--baseline-frame", type=int, default=5)
-    ap.add_argument("--min-accuracy", type=float, default=1.0,
-                    help="exit non-zero below this fraction correct (default 1.0)")
+    ap.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=1.0,
+        help="exit non-zero below this fraction correct (default 1.0)",
+    )
     for f in fields(DetectorConfig):
-        ap.add_argument(f"--{f.name.replace('_', '-')}",
-                        type=(lambda s: s.lower() in ("1", "true", "yes")) if f.type in ("bool", bool) else type(f.default),
-                        default=f.default)
+        ap.add_argument(
+            f"--{f.name.replace('_', '-')}",
+            type=(lambda s: s.lower() in ("1", "true", "yes"))
+            if f.type in ("bool", bool)
+            else type(f.default),
+            default=f.default,
+        )
     a = ap.parse_args(argv)
     cfg = DetectorConfig(**{f.name: getattr(a, f.name) for f in fields(DetectorConfig)})
 
@@ -125,7 +146,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     cal = Calibrator(a.calibration)
     if not cal.load(vf.size):
-        print(f"no usable calibration at {a.calibration} for {vf.size[0]}x{vf.size[1]} video", file=sys.stderr)
+        print(
+            f"no usable calibration at {a.calibration} for {vf.size[0]}x{vf.size[1]} video",
+            file=sys.stderr,
+        )
         return 2
     expected = []
     if a.expect:
@@ -136,7 +160,9 @@ def main(argv: list[str] | None = None) -> int:
     print(format_table(res))
     if not a.expect:
         return 0
-    return 0 if res.accuracy >= a.min_accuracy and all(r.expected is not None for r in res.rows) else 1
+    return (
+        0 if res.accuracy >= a.min_accuracy and all(r.expected is not None for r in res.rows) else 1
+    )
 
 
 if __name__ == "__main__":

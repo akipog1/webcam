@@ -1,4 +1,5 @@
 """Interactive homography calibration with save/load and reprojection overlay."""
+
 from __future__ import annotations
 
 import json
@@ -13,8 +14,8 @@ from . import autocal, board
 
 log = logging.getLogger(__name__)
 
-AUTO_MIN_CONFIDENCE = 0.65   # below this an automatic fit is not offered
-AUTO_SETTLE_FRAMES = 20      # let the camera's exposure settle before the first automatic attempt
+AUTO_MIN_CONFIDENCE = 0.65  # below this an automatic fit is not offered
+AUTO_SETTLE_FRAMES = 20  # let the camera's exposure settle before the first automatic attempt
 
 
 class Calibrator:
@@ -99,7 +100,9 @@ class Calibrator:
         return float(p[0]), float(p[1])
 
     def to_camera(self, pts: np.ndarray) -> np.ndarray:
-        return cv2.perspectiveTransform(pts.reshape(-1, 1, 2).astype(np.float32), self.H_inv).reshape(-1, 2)
+        return cv2.perspectiveTransform(
+            pts.reshape(-1, 1, 2).astype(np.float32), self.H_inv
+        ).reshape(-1, 2)
 
     # ---------- persistence ----------
     def save(self) -> None:
@@ -123,8 +126,11 @@ class Calibrator:
             if saved is None:
                 log.warning("calibration has no frame size recorded; assuming it matches")
             elif frame_size is not None and tuple(saved) != tuple(frame_size):
-                log.warning("calibration was made at %s but camera is %s; recalibrate",
-                            tuple(saved), tuple(frame_size))
+                log.warning(
+                    "calibration was made at %s but camera is %s; recalibrate",
+                    tuple(saved),
+                    tuple(frame_size),
+                )
                 return False
             self.set_matrix(np.array(data["H"], np.float64))
             self.frame_size = tuple(saved) if saved is not None else frame_size
@@ -141,23 +147,36 @@ class Calibrator:
             return
         for r in board.RING_RADII_PX:
             ring = np.array([board.polar_to_canvas(r, a) for a in range(0, 360, 4)], np.float32)
-            cv2.polylines(frame, [self.to_camera(ring).astype(np.int32)], True, color, 1, cv2.LINE_AA)
+            cv2.polylines(
+                frame, [self.to_camera(ring).astype(np.int32)], True, color, 1, cv2.LINE_AA
+            )
         for i in range(20):
             a = board.sector_wire_angle(i)
-            line = np.array([board.polar_to_canvas(board.OUTER_BULL_PX, a),
-                             board.polar_to_canvas(board.DOUBLE_OUTER_PX, a)], np.float32)
+            line = np.array(
+                [
+                    board.polar_to_canvas(board.OUTER_BULL_PX, a),
+                    board.polar_to_canvas(board.DOUBLE_OUTER_PX, a),
+                ],
+                np.float32,
+            )
             p = self.to_camera(line).astype(np.int32)
             cv2.line(frame, tuple(p[0]), tuple(p[1]), color, 1, cv2.LINE_AA)
 
     # ---------- automatic ----------
-    def auto_fit(self, frame: np.ndarray, bull: Optional[tuple[float, float]] = None,
-                 min_confidence: float = AUTO_MIN_CONFIDENCE) -> Optional[float]:
+    def auto_fit(
+        self,
+        frame: np.ndarray,
+        bull: Optional[tuple[float, float]] = None,
+        min_confidence: float = AUTO_MIN_CONFIDENCE,
+    ) -> Optional[float]:
         """Detect the board in ``frame`` and set the homography. Returns the detection
         confidence (0..1) if it reached ``min_confidence``, otherwise None (state unchanged)."""
         res = autocal.detect_board(frame, bull=bull)
         if res is None or res.confidence < min_confidence:
-            log.info("auto-calibration found no confident fit (%s)",
-                     "nothing board-like" if res is None else f"confidence {res.confidence:.2f}")
+            log.info(
+                "auto-calibration found no confident fit (%s)",
+                "nothing board-like" if res is None else f"confidence {res.confidence:.2f}",
+            )
             return None
         try:
             self.set_matrix(res.H)
@@ -165,7 +184,11 @@ class Calibrator:
             log.warning("auto-calibration produced an invalid homography: %s", e)
             return None
         self.frame_size = (frame.shape[1], frame.shape[0])
-        log.info("auto-calibration: confidence %.2f, mean edge distance %.1f px", res.confidence, res.mean_edge_px)
+        log.info(
+            "auto-calibration: confidence %.2f, mean edge distance %.1f px",
+            res.confidence,
+            res.mean_edge_px,
+        )
         return res.confidence
 
     def target_pixels(self) -> list[tuple[float, float]]:
@@ -192,8 +215,14 @@ class Calibrator:
                 cv2.moveWindow(win, int(x), int(y))
             except cv2.error:
                 pass
-        cv2.setMouseCallback(win, lambda e, x, y, *_: clicks.append((x, y))
-                             if e == cv2.EVENT_LBUTTONDOWN and len(clicks) < len(names) else None)
+        cv2.setMouseCallback(
+            win,
+            lambda e, x, y, *_: (
+                clicks.append((x, y))
+                if e == cv2.EVENT_LBUTTONDOWN and len(clicks) < len(names)
+                else None
+            ),
+        )
         err: Optional[float] = None
         note = ""
         misses = frames = 0
@@ -219,38 +248,63 @@ class Calibrator:
                 cv2.imshow(win, wait)
                 cv2.waitKey(1)
                 bull = clicks[0] if (want_auto and clicks) else None
-                conf = self.auto_fit(frame, bull=bull, min_confidence=0.5 if bull else AUTO_MIN_CONFIDENCE)
+                conf = self.auto_fit(
+                    frame, bull=bull, min_confidence=0.5 if bull else AUTO_MIN_CONFIDENCE
+                )
                 if conf is not None:
                     clicks[:] = self.target_pixels()
-                    note = f"Auto-detected (confidence {conf:.2f}) - check the rings, Enter to accept"
+                    note = (
+                        f"Auto-detected (confidence {conf:.2f}) - check the rings, Enter to accept"
+                    )
                 else:
-                    note = ("Auto failed - click the bull then press a, or click the 5 points"
-                            if not bull else "Still no fit - click all 5 points by hand")
+                    note = (
+                        "Auto failed - click the bull then press a, or click the 5 points"
+                        if not bull
+                        else "Still no fit - click all 5 points by hand"
+                    )
                 auto_pending = want_auto = False
             disp = frame.copy()
             for i, p in enumerate(clicks):
                 q = (int(p[0]), int(p[1]))
                 cv2.circle(disp, q, 5, (0, 0, 255), -1)
-                cv2.putText(disp, str(i + 1), (q[0] + 8, q[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.putText(
+                    disp,
+                    str(i + 1),
+                    (q[0] + 8, q[1] - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
             if len(clicks) >= 4:
                 try:
-                    err = self.fit(clicks, [self.targets[n] for n in names[:len(clicks)]])
+                    err = self.fit(clicks, [self.targets[n] for n in names[: len(clicks)]])
                     self.draw_overlay(disp)
                 except (ValueError, cv2.error, np.linalg.LinAlgError) as e:
                     err = None
                     note = f"Invalid calibration: {e}"
                     log.warning("%s", note)
-            msg = (f"Click: {names[len(clicks)]}" if len(clicks) < len(names) else "All points set")
-            cv2.putText(disp, note or msg, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+            msg = f"Click: {names[len(clicks)]}" if len(clicks) < len(names) else "All points set"
+            cv2.putText(
+                disp, note or msg, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2
+            )
             footer = "Enter=accept (>=4 pts)  a=auto  u=undo  r=reset  q=quit"
             if err is not None:
                 footer = f"err {err:.1f}px  " + footer
-            cv2.putText(disp, footer, (20, disp.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(
+                disp,
+                footer,
+                (20, disp.shape[0] - 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+            )
             cv2.imshow(win, disp)
             k = cv2.waitKey(1) & 0xFF
             if k in (13, 10) and len(clicks) >= 4:
                 try:
-                    self.fit(clicks, [self.targets[n] for n in names[:len(clicks)]])
+                    self.fit(clicks, [self.targets[n] for n in names[: len(clicks)]])
                 except (ValueError, cv2.error, np.linalg.LinAlgError) as e:
                     note = f"Invalid calibration: {e} - adjust the points"
                     log.warning("%s", note)
@@ -259,9 +313,12 @@ class Calibrator:
                 self.save()
                 return True
             if k == ord("r"):
-                clicks.clear(); err = None; note = ""
+                clicks.clear()
+                err = None
+                note = ""
             elif k == ord("u") and clicks:
-                clicks.pop(); note = ""
+                clicks.pop()
+                note = ""
             elif k == ord("a"):
                 want_auto = True
             elif k == ord("q"):

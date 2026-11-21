@@ -1,6 +1,7 @@
 """End-to-end test on synthetic images: render a board and darts through a
 perspective camera, calibrate from simulated clicks, then run detector ->
 homography -> scorer -> game exactly as the app does (minus the GUI)."""
+
 import json
 
 import cv2
@@ -12,8 +13,7 @@ from dart_scorer.calibration import Calibrator
 from dart_scorer.detector import DartDetector, State
 from dart_scorer.game import GameState
 from dart_scorer.scorer import score_point
-from synth import (AIMS, H, W, add_dart, calibrated, cfg, ground_truth, render_board,
-                   run, to_cam)
+from synth import AIMS, H, W, add_dart, calibrated, cfg, ground_truth, render_board, run, to_cam
 
 
 @pytest.fixture(scope="module")
@@ -58,10 +58,13 @@ def test_full_turn_scores_and_game(world):
     assert det.state == State.WAIT_THROW and det.darts_this_turn == 0
 
 
-@pytest.mark.parametrize("label,polar", [
-    ("Bullseye", (0.0, 0)),
-    ("Outer bull", (11 * board.PX_PER_MM, 90)),
-])
+@pytest.mark.parametrize(
+    "label,polar",
+    [
+        ("Bullseye", (0.0, 0)),
+        ("Outer bull", (11 * board.PX_PER_MM, 90)),
+    ],
+)
 def test_bull_regions(world, label, polar):
     _, h_canvas2cam = world
     cal, _ = calibrated(h_canvas2cam)
@@ -142,22 +145,29 @@ def test_calibration_rejects_malformed_homography(tmp_path):
         with pytest.raises(ValueError):
             cal.set_matrix(bad)
 
-    cal.path.write_text(json.dumps({
-        "canvas": board.CANVAS_SIZE,
-        "frame": [W, H],
-        "H": [[1, 0, 0], [0, 1, 0], [0, 0, 0]],
-    }))
+    cal.path.write_text(
+        json.dumps(
+            {
+                "canvas": board.CANVAS_SIZE,
+                "frame": [W, H],
+                "H": [[1, 0, 0], [0, 1, 0], [0, 0, 0]],
+            }
+        )
+    )
     assert not cal.load((W, H))
     assert cal.H is None
 
 
 def test_collinear_clicks_do_not_replace_valid_calibration(tmp_path):
     cal = Calibrator(str(tmp_path / "cal.json"))
-    valid = np.array([
-        [1.2, 0.1, 10],
-        [0.2, 1.1, 20],
-        [0.05, -0.1, 1],
-    ], dtype=float)
+    valid = np.array(
+        [
+            [1.2, 0.1, 10],
+            [0.2, 1.1, 20],
+            [0.05, -0.1, 1],
+        ],
+        dtype=float,
+    )
     cal.set_matrix(valid)
     old_h = cal.H.copy()
     old_inv = cal.H_inv.copy()
@@ -173,11 +183,16 @@ def test_collinear_clicks_do_not_replace_valid_calibration(tmp_path):
 def test_interactive_calibration_retries_after_invalid_clicks(world, tmp_path, monkeypatch):
     _, h_canvas2cam = world
     cal = Calibrator(str(tmp_path / "cal.json"))
-    cal.set_matrix(np.array([
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ], dtype=float))
+    cal.set_matrix(
+        np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        )
+    )
     old_h = cal.H.copy()
     callback = None
     wait_count = 0
