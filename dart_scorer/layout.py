@@ -82,6 +82,30 @@ def compute_layout(
     return out
 
 
+def image_point_from_window(
+    window: str, x: float, y: float, image_size: tuple[int, int]
+) -> tuple[float, float]:
+    """Map a highgui mouse position into image pixels.
+
+    The Windows backend reports client coordinates. When the window is a
+    different size from the image, scale by the image rectangle. If the window
+    cannot be queried (headless tests, missing window), return the point as given.
+    """
+    iw, ih = image_size
+    if iw <= 0 or ih <= 0:
+        return float(x), float(y)
+    try:
+        rect = cv2.getWindowImageRect(window)
+    except cv2.error:
+        return float(x), float(y)
+    if rect is None or len(rect) < 4:
+        return float(x), float(y)
+    ww, wh = int(rect[2]), int(rect[3])
+    if ww <= 0 or wh <= 0 or (ww == iw and wh == ih):
+        return float(x), float(y)
+    return float(x) * iw / ww, float(y) * ih / wh
+
+
 def apply_layout(layout: dict[str, Rect]) -> None:
     """Create each window as resizable and put it in place."""
     for name, (x, y, w, h) in layout.items():

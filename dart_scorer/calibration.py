@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from . import autocal, board
+from .layout import image_point_from_window
 
 log = logging.getLogger(__name__)
 
@@ -57,16 +58,23 @@ class Calibrator:
 
         method = cv2.RANSAC if len(src) > 4 else 0
         try:
-            H, _ = cv2.findHomography(s, d, method, 8.0)
+            H, mask = cv2.findHomography(s, d, method, 8.0)
         except cv2.error as e:
             raise ValueError("homography calculation failed") from e
         if H is None:
             raise ValueError("homography failed - points are degenerate")
 
         # Validate the candidate before changing the live calibration.
+        # With 5+ points, score only the RANSAC inliers so one bad click
+        # does not reject a fit the other points support.
         candidate = self._validated_matrix(H)
         proj = cv2.perspectiveTransform(s.reshape(-1, 1, 2), candidate).reshape(-1, 2)
         errors = np.linalg.norm(proj - d, axis=1)
+        if mask is not None and len(src) > 4:
+            inliers = np.asarray(mask).reshape(-1).astype(bool)
+            if int(inliers.sum()) < 4:
+                raise ValueError("homography failed - not enough points agree")
+            errors = errors[inliers]
         err = float(errors.mean())
         if err > 25.0 or float(errors.max()) > 50.0:
             raise ValueError(f"click geometry is inconsistent (mean error {err:.1f} px)")
@@ -206,8 +214,16 @@ class Calibrator:
         """
         names = list(self.targets)
         clicks: list[tuple[float, float]] = []
+        view_size = [0, 0]
         win = "Calibration"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+
+        def on_mouse(event: int, x: int, y: int, *_args) -> None:
+            if event != cv2.EVENT_LBUTTONDOWN or len(clicks) >= len(names):
+                return
+            if view_size[0] <= 0 or view_size[1] <= 0:
+                return
+            clicks.append(image_point_from_window(win, x, y, (view_size[0], view_size[1])))
         if window_rect is not None:
             try:
                 x, y, w, h = window_rect
@@ -215,14 +231,7 @@ class Calibrator:
                 cv2.moveWindow(win, int(x), int(y))
             except cv2.error:
                 pass
-        cv2.setMouseCallback(
-            win,
-            lambda e, x, y, *_: (
-                clicks.append((x, y))
-                if e == cv2.EVENT_LBUTTONDOWN and len(clicks) < len(names)
-                else None
-            ),
-        )
+        cv2.setMouseCallback(win, on_mouse)
         err: Optional[float] = None
         note = ""
         misses = frames = 0
@@ -240,7 +249,8 @@ class Calibrator:
                 continue
             misses = 0
             frames += 1
-            self.frame_size = (frame.shape[1], frame.shape[0])
+            view_size[0], view_size[1] = frame.shape[1], frame.shape[0]
+            self.frame_size = (view_size[0], view_size[1])
             if (auto_pending and frames >= AUTO_SETTLE_FRAMES) or want_auto:
                 hint = "Detecting the board..."
                 wait = frame.copy()

@@ -17,7 +17,7 @@ from .controller import Action, Controller, ThrowLogger  # ThrowLogger re-export
 from .detector import DartDetector
 from .fusion import DetectionPairer, fuse
 from .game import GameState
-from .layout import apply_layout, compute_layout, screen_size
+from .layout import apply_layout, compute_layout, image_point_from_window, screen_size
 from .sources import Camera, Recorder, VideoFile, open_source, open_source2  # Camera re-exported
 from .live_dashboard import LiveDashboard
 import time
@@ -187,18 +187,12 @@ class App:
                     if self._dashboard_frame is not None:
                         cv2.imshow(LiveDashboard.WINDOW, self._dashboard_frame)
                 key = cv2.waitKey(delay) & 0xFF
-                if self.ctl.edit_buffer is None and key in (ord("d"), ord("D")):
-                    self.dashboard_enabled = not self.dashboard_enabled
-                    if not self.dashboard_enabled:
-                        cv2.destroyWindow(LiveDashboard.WINDOW)
+                if self._dashboard_key(key):
                     continue
-                if self.ctl.edit_buffer is None and key in (ord("x"), ord("X")):
-                    self.dashboard.false_positives += 1
-                    continue
-                if self.ctl.edit_buffer is None and key in (ord("m"), ord("M")):
-                    self.dashboard.missed_darts += 1
-                    continue
+                editing = self.ctl.edit_buffer is not None
+                had_dart = bool(self.game.turn_darts)
                 action = self.ctl.handle_key(key, frame, frame2)
+                self._clear_pairer_for_key(key, editing, had_dart)
                 if action is Action.QUIT:
                     break
                 if action is Action.RECALIBRATE:
@@ -209,9 +203,7 @@ class App:
                         self.ctl.after_recalibrate()
                         if self.pairer:
                             self.pairer.clear()
-                self.det.after_scored()
-                if self.det2 is not None:
-                    self.det2.after_scored()
+                self._after_scored()
         finally:
             self.cam.release()
             if self.cam2 is not None:
@@ -261,8 +253,44 @@ class App:
 
     def _on_board_click(self, event, x, y, *_) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
-            k = board.CANVAS_SIZE / self._board_view_size()  # window px -> canvas px
-            self.ctl.board_click(x * k, y * k)
+            view = self._board_view_size()
+            # Window client pixels -> board-view pixels -> canvas pixels.
+            vx, vy = image_point_from_window("Board", x, y, (view, view))
+            k = board.CANVAS_SIZE / view
+            self.ctl.board_click(vx * k, vy * k)
+
+    def _after_scored(self) -> None:
+        self.det.after_scored()
+        if self.det2 is not None:
+            self.det2.after_scored()
+
+    def _dashboard_key(self, key: int) -> bool:
+        """Handle d/x/m. A consumed key still lets a settled dart leave SCORED."""
+        if self.ctl.edit_buffer is not None:
+            return False
+        if key in (ord("d"), ord("D")):
+            self.dashboard_enabled = not self.dashboard_enabled
+            if not self.dashboard_enabled:
+                cv2.destroyWindow(LiveDashboard.WINDOW)
+        elif key in (ord("x"), ord("X")):
+            self.dashboard.false_positives += 1
+        elif key in (ord("m"), ord("M")):
+            self.dashboard.missed_darts += 1
+        else:
+            return False
+        self._after_scored()
+        return True
+
+    def _clear_pairer_for_key(self, key: int, editing: bool, had_dart: bool) -> None:
+        """Drop a detection still waiting for the other camera when the turn changes.
+
+        ``b`` and ``n`` always re-baseline. Undo does too, but only when a dart
+        was actually removed; a no-op undo must leave a pending dart alone.
+        """
+        if self.pairer is None or editing:
+            return
+        if key in (ord("b"), ord("n")) or (key == ord("u") and had_dart):
+            self.pairer.clear()
 
     # ---------- HUD ----------
     def _draw(self, frame) -> None:

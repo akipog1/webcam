@@ -28,7 +28,6 @@ class CameraStats:
     last_detection: Optional[Detection] = None
     confidence: Optional[float] = None
     last_update: Optional[float] = None
-    last_update: Optional[float] = None
 
 
 def _text(img, value: str, xy, scale=0.52, color=(245, 245, 245), thickness=1):
