@@ -3,6 +3,7 @@ perspective camera, calibrate from simulated clicks, then run detector ->
 homography -> scorer -> game exactly as the app does (minus the GUI)."""
 import json
 
+import cv2
 import numpy as np
 import pytest
 
@@ -148,3 +149,71 @@ def test_calibration_rejects_malformed_homography(tmp_path):
     }))
     assert not cal.load((W, H))
     assert cal.H is None
+
+
+def test_collinear_clicks_do_not_replace_valid_calibration(tmp_path):
+    cal = Calibrator(str(tmp_path / "cal.json"))
+    valid = np.array([
+        [1.2, 0.1, 10],
+        [0.2, 1.1, 20],
+        [0.05, -0.1, 1],
+    ], dtype=float)
+    cal.set_matrix(valid)
+    old_h = cal.H.copy()
+    old_inv = cal.H_inv.copy()
+
+    collinear = [(100, 100), (200, 200), (300, 300), (400, 400)]
+    with pytest.raises(ValueError, match="collinear|degenerate"):
+        cal.fit(collinear, list(board.calibration_targets().values())[:4])
+
+    assert np.array_equal(cal.H, old_h)
+    assert np.array_equal(cal.H_inv, old_inv)
+
+
+def test_interactive_calibration_retries_after_invalid_clicks(world, tmp_path, monkeypatch):
+    _, h_canvas2cam = world
+    cal = Calibrator(str(tmp_path / "cal.json"))
+    cal.set_matrix(np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ], dtype=float))
+    old_h = cal.H.copy()
+    callback = None
+    wait_count = 0
+    frame = np.zeros((H, W, 3), dtype=np.uint8)
+    targets = list(board.calibration_targets().values())
+    valid_clicks = [to_cam(h_canvas2cam, p) for p in targets]
+
+    def set_mouse_callback(_win, cb):
+        nonlocal callback
+        callback = cb
+
+    def wait_key(_ms):
+        nonlocal wait_count
+        wait_count += 1
+        if wait_count == 1:
+            for p in [(100, 100), (200, 200), (300, 300), (400, 400)]:
+                callback(cv2.EVENT_LBUTTONDOWN, *p)
+            return 255
+        if wait_count == 2:
+            assert np.array_equal(cal.H, old_h)
+            return 13
+        if wait_count == 3:
+            return ord("r")
+        if wait_count == 4:
+            for p in valid_clicks:
+                callback(cv2.EVENT_LBUTTONDOWN, int(p[0]), int(p[1]))
+            return 255
+        return 13
+
+    monkeypatch.setattr(cv2, "namedWindow", lambda *a, **k: None)
+    monkeypatch.setattr(cv2, "setMouseCallback", set_mouse_callback)
+    monkeypatch.setattr(cv2, "imshow", lambda *a, **k: None)
+    monkeypatch.setattr(cv2, "destroyWindow", lambda *a, **k: None)
+    monkeypatch.setattr(cv2, "waitKey", wait_key)
+
+    assert cal.run_interactive(lambda: frame, auto=False)
+    assert cal.path.exists()
+    assert cal.H is not None
+    assert not np.array_equal(cal.H, old_h)
