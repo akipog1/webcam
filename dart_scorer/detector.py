@@ -219,10 +219,11 @@ def estimate_tip(contour: np.ndarray, method: str = "fitline", camera_side: str 
     if method == "lowest":
         i = int(np.argmax(pts @ np.array(side_vec, np.float32)))
         return float(pts[i, 0]), float(pts[i, 1])
-    vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+    vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_WELSCH, 0, 0.01, 0.01).flatten()
     d = np.array([vx, vy], np.float32)
     if d @ np.array(side_vec, np.float32) < 0:
         d = -d
     proj = (pts - np.array([x0, y0], np.float32)) @ d
-    p = np.array([x0, y0], np.float32) + d * proj.max()
+    # Avoid letting a few isolated mask pixels define the dart's endpoint.
+    p = np.array([x0, y0], np.float32) + d * np.percentile(proj, 98.0)
     return float(p[0]), float(p[1])
