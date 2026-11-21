@@ -24,3 +24,10 @@ def test_manual_diagnostic_counters_and_result():
     assert dashboard.false_positives == 1
     assert dashboard.missed_darts == 2
     assert dashboard._last_method == "intersection"
+
+
+def test_dashboard_render_throttling():
+    dashboard = LiveDashboard()
+    assert dashboard.should_render(1.0)
+    assert not dashboard.should_render(1.05)
+    assert dashboard.should_render(1.10)

@@ -49,6 +49,7 @@ class App:
         self.dashboard = LiveDashboard(cfg.dual)
         self.dashboard_enabled = True
         self._read_time1 = self._read_time2 = None
+        self._dashboard_frame = None
         if cfg.dual:
             self.cam2 = open_source2(cfg)
             self.cal2 = Calibrator(cfg.calibration_file2)
@@ -154,9 +155,12 @@ class App:
                     self._draw2(frame2)
                 if self.dashboard_enabled:
                     skew = abs(self._read_time2 - self._read_time1) * 1000.0 if self._read_time1 is not None and self._read_time2 is not None else None
-                    dashboard_frame = self.dashboard.render(frame, frame2, self.det, self.det2,
-                                                             self.cal, self.cal2, self.game, self.ctl, skew)
-                    cv2.imshow(LiveDashboard.WINDOW, dashboard_frame)
+                    if self.dashboard.should_render():
+                        self._dashboard_frame = self.dashboard.render(
+                            frame, frame2, self.det, self.det2,
+                            self.cal, self.cal2, self.game, self.ctl, skew)
+                    if self._dashboard_frame is not None:
+                        cv2.imshow(LiveDashboard.WINDOW, self._dashboard_frame)
                 key = cv2.waitKey(delay) & 0xFF
                 if self.ctl.edit_buffer is None and key in (ord("d"), ord("D")):
                     self.dashboard_enabled = not self.dashboard_enabled
