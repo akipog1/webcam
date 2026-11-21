@@ -89,4 +89,37 @@ def test_fitline_tip_toward_camera_side():
     cv2.line(f, (60, 30), (120, 170), 255, 5)
     c, _ = cv2.findContours(f, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     x, y = estimate_tip(c[0], "fitline", "bottom")
-    assert y > 160 and abs(x - 120) < 6
+    assert np.hypot(x - 120, y - 170) < 1.5
+
+
+def test_fitline_tip_rejects_an_isolated_extreme_mask_pixel():
+    f = np.zeros((200, 200), np.uint8)
+    cv2.line(f, (60, 30), (120, 170), 255, 5)
+    c, _ = cv2.findContours(f, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    noisy_contour = np.concatenate((c[0], np.array([[[124, 179]]], dtype=np.int32)))
+
+    x, y = estimate_tip(noisy_contour, "fitline", "bottom")
+
+    assert np.hypot(x - 120, y - 170) < 2
+
+
+def test_fitline_tip_resists_an_off_axis_contour_lobe():
+    axis = np.array([0.4472136, 0.8944272], dtype=np.float32)
+    normal = np.array([-axis[1], axis[0]], dtype=np.float32)
+    center = np.array([80, 90], dtype=np.float32)
+    shaft = np.array([
+        center + along * axis + across * normal
+        for along in np.linspace(-60, 60, 121)
+        for across in (-2, 2)
+    ], dtype=np.float32)
+    lobe = np.array([
+        center + along * axis + (35 + across) * normal
+        for along in np.linspace(-50, -30, 20)
+        for across in (-2, 2)
+    ], dtype=np.float32)
+    contour = np.vstack((shaft, lobe)).reshape(-1, 1, 2)
+    expected_tip = center + 60 * axis
+
+    x, y = estimate_tip(contour, "fitline", "bottom")
+
+    assert np.hypot(x - expected_tip[0], y - expected_tip[1]) < 3
