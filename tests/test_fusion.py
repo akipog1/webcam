@@ -11,8 +11,15 @@ from dart_scorer.fusion import DetectionPairer, fuse
 from dart_scorer.scorer import score_point
 from synth3d import CAM1, CAM2, Cam
 
-AIMS = [("T20", 103, 0), ("D16", 166, 234), ("S5", 135, 342), ("D6", 166, 90),
-        ("T19", 103, 198), ("S1", 135, 18), ("50", 0, 0)]
+AIMS = [
+    ("T20", 103, 0),
+    ("D16", 166, 234),
+    ("S5", 135, 342),
+    ("D6", 166, 90),
+    ("T19", 103, 198),
+    ("S1", 135, 18),
+    ("50", 0, 0),
+]
 
 
 def _detect(cam, cal, tip):
@@ -60,7 +67,7 @@ def test_parallel_lines_fall_back_to_average(rig):
     c1, _, cal1, _ = rig
     truth = board.polar_to_canvas(103 * board.PX_PER_MM, 0)
     d1 = _detect(c1, cal1, truth)
-    f = fuse(d1, cal1, d1, cal1)          # identical view -> lines parallel
+    f = fuse(d1, cal1, d1, cal1)  # identical view -> lines parallel
     assert f.method == "average"
     assert f.flat == pytest.approx(cal1.to_board(d1.tip))
 

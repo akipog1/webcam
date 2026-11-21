@@ -2,6 +2,7 @@
 
 ``compute_layout`` is pure (testable); ``apply_layout`` talks to OpenCV and never raises.
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,10 +12,10 @@ import cv2
 
 log = logging.getLogger(__name__)
 
-TITLE_BAR = 32        # window title bar height (px), added to every window's client height
-TASKBAR = 56          # space kept free at the bottom of the screen
+TITLE_BAR = 32  # window title bar height (px), added to every window's client height
+TASKBAR = 56  # space kept free at the bottom of the screen
 DEFAULT_SCREEN = (1920, 1080)
-Rect = tuple[int, int, int, int]   # x, y, client width, client height
+Rect = tuple[int, int, int, int]  # x, y, client width, client height
 
 
 def screen_size(override: str = "") -> tuple[int, int]:
@@ -27,12 +28,14 @@ def screen_size(override: str = "") -> tuple[int, int]:
             log.warning("bad --screen %r (use e.g. 1920x1080)", override)
     try:
         import ctypes
+
         u = ctypes.windll.user32  # type: ignore[attr-defined]
         return int(u.GetSystemMetrics(0)), int(u.GetSystemMetrics(1))
     except Exception:
         pass
     try:
         import tkinter
+
         root = tkinter.Tk()
         root.withdraw()
         size = (root.winfo_screenwidth(), root.winfo_screenheight())
@@ -42,8 +45,13 @@ def screen_size(override: str = "") -> tuple[int, int]:
         return DEFAULT_SCREEN
 
 
-def compute_layout(screen: tuple[int, int], dual: bool, cam_size: tuple[int, int] = (1280, 720),
-                   cam2_size: Optional[tuple[int, int]] = None, debug: bool = False) -> dict[str, Rect]:
+def compute_layout(
+    screen: tuple[int, int],
+    dual: bool,
+    cam_size: tuple[int, int] = (1280, 720),
+    cam2_size: Optional[tuple[int, int]] = None,
+    debug: bool = False,
+) -> dict[str, Rect]:
     """Window name -> (x, y, w, h).
 
     Single camera: the camera view on the left, the flat Board square on the right.
@@ -64,7 +72,7 @@ def compute_layout(screen: tuple[int, int], dual: bool, cam_size: tuple[int, int
         h2 = int(w / a2)
         out["Dart Scorer 2"] = (0, h + TITLE_BAR, w, h2)
     side = max(200, min(sw - w - 8, avail_h - TITLE_BAR))
-    if debug:                                   # leave room under the Board for the Mask window
+    if debug:  # leave room under the Board for the Mask window
         side = min(side, int(avail_h * 0.62) - TITLE_BAR)
     out["Board"] = (w + 8, 0, side, side)
     if debug:
@@ -81,6 +89,6 @@ def apply_layout(layout: dict[str, Rect]) -> None:
             cv2.namedWindow(name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(name, w, h)
             cv2.moveWindow(name, x, y)
-        except cv2.error as e:   # headless build, odd backend: the app still works, just untiled
+        except cv2.error as e:  # headless build, odd backend: the app still works, just untiled
             log.debug("could not place window %s: %s", name, e)
             return

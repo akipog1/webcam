@@ -3,6 +3,7 @@
 Everything the app does in response to a detection, key or click lives here so
 it can be unit-tested without OpenCV windows or a camera.
 """
+
 from __future__ import annotations
 
 import csv
@@ -33,8 +34,20 @@ class Action(Enum):
 class ThrowLogger:
     """Append each throw to CSV. A row with source ``undo`` voids the previous
     row for that player (it repeats the undone dart)."""
-    FIELDS = ["timestamp", "player", "raw_x", "raw_y", "flat_x", "flat_y",
-              "ring", "sector", "points", "label", "source"]
+
+    FIELDS = [
+        "timestamp",
+        "player",
+        "raw_x",
+        "raw_y",
+        "flat_x",
+        "flat_y",
+        "ring",
+        "sector",
+        "points",
+        "label",
+        "source",
+    ]
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -45,15 +58,29 @@ class ThrowLogger:
     def log(self, player: str, raw, flat, s: Score, source: str = "auto") -> None:
         def fmt(p, i):
             return "" if p is None else f"{p[i]:.1f}"
+
         with self.path.open("a", newline="") as f:
-            csv.writer(f).writerow([datetime.now().isoformat(timespec="milliseconds"), player,
-                                    fmt(raw, 0), fmt(raw, 1), fmt(flat, 0), fmt(flat, 1),
-                                    s.ring, s.sector or "", s.points, s.label, source])
+            csv.writer(f).writerow(
+                [
+                    datetime.now().isoformat(timespec="milliseconds"),
+                    player,
+                    fmt(raw, 0),
+                    fmt(raw, 1),
+                    fmt(flat, 0),
+                    fmt(flat, 1),
+                    s.ring,
+                    s.sector or "",
+                    s.points,
+                    s.label,
+                    source,
+                ]
+            )
 
 
 class Controller:
-    def __init__(self, game: GameState, det: DartDetector, cal: Calibrator,
-                 logger: ThrowLogger) -> None:
+    def __init__(
+        self, game: GameState, det: DartDetector, cal: Calibrator, logger: ThrowLogger
+    ) -> None:
         self.game, self.det, self.cal, self.logger = game, det, cal, logger
         #: second detector in two-camera mode; kept in step with ``det`` on b/n/undo
         self.det2: Optional[DartDetector] = None

@@ -1,4 +1,5 @@
 """Main application: camera/video loop, HUD and windows. Logic lives in controller.py."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -53,7 +54,9 @@ class App:
         if cfg.dual:
             self.cam2 = open_source2(cfg)
             self.cal2 = Calibrator(cfg.calibration_file2)
-            self.det2 = DartDetector(dataclasses.replace(cfg.detector, camera_side=cfg.camera_side2))
+            self.det2 = DartDetector(
+                dataclasses.replace(cfg.detector, camera_side=cfg.camera_side2)
+            )
             self.pairer = DetectionPairer(cfg.fuse_window)
             self.ctl.det2 = self.det2
 
@@ -61,25 +64,35 @@ class App:
     @staticmethod
     def _calibration_reader(cam):
         """Frames for the calibration window; a clip is looped so you can take your time."""
+
         def read():
             f = cam.read()
             if f is None and not cam.is_live:
                 cam.rewind()
                 f = cam.read()
             return f
+
         return read
 
     def _calibrate(self, second: bool = False) -> bool:
         cam, cal = (self.cam2, self.cal2) if second else (self.cam, self.cal)
-        ok = cal.run_interactive(self._calibration_reader(cam), auto=self.cfg.auto_calibrate,
-                                 window_rect=self._calibration_rect())
+        ok = cal.run_interactive(
+            self._calibration_reader(cam),
+            auto=self.cfg.auto_calibrate,
+            window_rect=self._calibration_rect(),
+        )
         if not cam.is_live:
             cam.rewind()
         return ok
 
     def _layout(self) -> dict:
-        return compute_layout(screen_size(self.cfg.screen), self.cam2 is not None, self.cam.size,
-                              self.cam2.size if self.cam2 is not None else None, self.cfg.debug)
+        return compute_layout(
+            screen_size(self.cfg.screen),
+            self.cam2 is not None,
+            self.cam.size,
+            self.cam2.size if self.cam2 is not None else None,
+            self.cfg.debug,
+        )
 
     def _calibration_rect(self):
         """Calibration window: the camera-1 tile, or None to leave it where the OS puts it."""
@@ -154,11 +167,23 @@ class App:
                 if frame2 is not None:
                     self._draw2(frame2)
                 if self.dashboard_enabled:
-                    skew = abs(self._read_time2 - self._read_time1) * 1000.0 if self._read_time1 is not None and self._read_time2 is not None else None
+                    skew = (
+                        abs(self._read_time2 - self._read_time1) * 1000.0
+                        if self._read_time1 is not None and self._read_time2 is not None
+                        else None
+                    )
                     if self.dashboard.should_render():
                         self._dashboard_frame = self.dashboard.render(
-                            frame, frame2, self.det, self.det2,
-                            self.cal, self.cal2, self.game, self.ctl, skew)
+                            frame,
+                            frame2,
+                            self.det,
+                            self.det2,
+                            self.cal,
+                            self.cal2,
+                            self.game,
+                            self.ctl,
+                            skew,
+                        )
                     if self._dashboard_frame is not None:
                         cv2.imshow(LiveDashboard.WINDOW, self._dashboard_frame)
                 key = cv2.waitKey(delay) & 0xFF
@@ -212,8 +237,11 @@ class App:
                 scored = self.ctl.on_fused(tip)
                 if scored is not None:
                     self.dashboard.record_result(tip.flat, tip.method)
-                log.info("fused (%s) -> %s", tip.method, self.game.turn_darts[-1].label
-                         if self.game.turn_darts else "-")
+                log.info(
+                    "fused (%s) -> %s",
+                    tip.method,
+                    self.game.turn_darts[-1].label if self.game.turn_darts else "-",
+                )
 
     def _draw2(self, frame) -> None:
         disp = frame.copy()
@@ -221,7 +249,9 @@ class App:
         d = self.det2.last_detection
         if d is not None:
             cv2.circle(disp, (int(d.tip[0]), int(d.tip[1])), 5, (0, 0, 255), -1)
-        t = f"cam 2 [{self.det2.state.value}]" + (f"  last: {self.last_fused.method}" if self.last_fused else "")
+        t = f"cam 2 [{self.det2.state.value}]" + (
+            f"  last: {self.last_fused.method}" if self.last_fused else ""
+        )
         cv2.putText(disp, t, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
         cv2.putText(disp, t, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         cv2.imshow("Dart Scorer 2", disp)
@@ -231,7 +261,7 @@ class App:
 
     def _on_board_click(self, event, x, y, *_) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
-            k = board.CANVAS_SIZE / self._board_view_size()   # window px -> canvas px
+            k = board.CANVAS_SIZE / self._board_view_size()  # window px -> canvas px
             self.ctl.board_click(x * k, y * k)
 
     # ---------- HUD ----------
@@ -244,18 +274,24 @@ class App:
         if d is not None:
             cv2.circle(disp, (int(d.tip[0]), int(d.tip[1])), 5, (0, 0, 255), -1)
         g, p, c = self.game, self.game.player, self.ctl
-        lines = [f"{p.name}: {p.remaining}   avg {p.three_dart_average:.1f}",
-                 f"Darts: {' '.join(s.label for s in g.turn_darts) or '-'}   turn {g.turn_total}",
-                 f"[{self.det.state.value}{'/' + self.det2.state.value if self.det2 else ''}] {c.message}"]
+        lines = [
+            f"{p.name}: {p.remaining}   avg {p.three_dart_average:.1f}",
+            f"Darts: {' '.join(s.label for s in g.turn_darts) or '-'}   turn {g.turn_total}",
+            f"[{self.det.state.value}{'/' + self.det2.state.value if self.det2 else ''}] {c.message}",
+        ]
         if c.edit_buffer is not None:
             lines.append(f"Override: {c.edit_buffer}_")
         if self.recorder:
             lines.append("REC")
         for i, t in enumerate(lines):
             cv2.putText(disp, t, (20, 35 + 32 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
-            cv2.putText(disp, t, (20, 35 + 32 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.putText(
+                disp, t, (20, 35 + 32 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2
+            )
         others = "  ".join(f"{q.name}:{q.remaining}" for q in g.players)
-        cv2.putText(disp, others, (20, disp.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(
+            disp, others, (20, disp.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2
+        )
         cv2.imshow("Dart Scorer", disp)
 
         warped = cv2.warpPerspective(frame, self.cal.H, (board.CANVAS_SIZE, board.CANVAS_SIZE))
@@ -265,8 +301,18 @@ class App:
                 continue
             x, y = pos
             cv2.circle(warped, (int(x), int(y)), 7, (0, 0, 255), -1)
-            cv2.putText(warped, s.label, (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.imshow("Board", cv2.resize(warped, (BOARD_VIEW_PX,) * 2) if not self.cfg.debug else warped)
+            cv2.putText(
+                warped,
+                s.label,
+                (int(x) + 10, int(y)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+            )
+        cv2.imshow(
+            "Board", cv2.resize(warped, (BOARD_VIEW_PX,) * 2) if not self.cfg.debug else warped
+        )
         if self.cfg.debug and self.det.last_mask is not None:
             cv2.imshow("Mask", self.det.last_mask)
 
@@ -281,11 +327,21 @@ def draw_board_lines(img: np.ndarray, color=(0, 255, 255)) -> None:
         p2 = tuple(int(v) for v in board.polar_to_canvas(board.DOUBLE_OUTER_PX, a))
         cv2.line(img, p1, p2, color, 1, cv2.LINE_AA)
         lx, ly = board.polar_to_canvas(board.DOUBLE_OUTER_PX + 30, i * 18.0)
-        cv2.putText(img, str(board.SECTORS[i]), (int(lx) - 12, int(ly) + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.putText(
+            img,
+            str(board.SECTORS[i]),
+            (int(lx) - 12, int(ly) + 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            color,
+            2,
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     cfg = parse_args(argv)
     if cfg.debug:
         logging.getLogger().setLevel(logging.DEBUG)

@@ -234,8 +234,10 @@ def main() -> None:
         print(f"[INFO] Loaded calibration from {config.calibration_path}")
         missing = [c for c in config.camera_sources if c not in calibrator.homographies]
         if missing:
-            print(f"[WARN] {config.calibration_path} has no calibration for {missing} "
-                  "(old single-camera file?). Recalibrating both cameras.")
+            print(
+                f"[WARN] {config.calibration_path} has no calibration for {missing} "
+                "(old single-camera file?). Recalibrating both cameras."
+            )
             calibrator = MultiCamCalibrator(board_radius_mm=config.board_radius_mm)
             args.calibrate = True
     else:
@@ -248,8 +250,11 @@ def main() -> None:
 
     still_missing = [c for c in config.camera_sources if c not in calibrator.homographies]
     if still_missing:
-        print(f"[ERROR] Cameras not calibrated: {still_missing}. Run again and click all 4 points "
-              "on each camera window.", file=sys.stderr)
+        print(
+            f"[ERROR] Cameras not calibrated: {still_missing}. Run again and click all 4 points "
+            "on each camera window.",
+            file=sys.stderr,
+        )
         sources.release()
         cv2.destroyAllWindows()
         sys.exit(1)
@@ -288,7 +293,9 @@ def main() -> None:
                     )
                 elif event["event"] == "board_cleared":
                     game.next_turn()
-                    print(f"[INFO] Board cleared - next turn ({game.player.name}, {game.player.remaining} left).")
+                    print(
+                        f"[INFO] Board cleared - next turn ({game.player.name}, {game.player.remaining} left)."
+                    )
 
             if config.show_preview:
                 canvas = draw_overlays(

@@ -10,6 +10,7 @@ comments allowed (``T20 D16 S5 50 25 0``). Compare by parsed score, so ``5`` == 
 The clip must start with an empty board (the baseline is taken at
 ``--baseline-frame``); the detector re-arms itself when darts are pulled.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,8 +39,11 @@ class Row:
 
     @property
     def ok(self) -> bool:
-        return (self.expected is not None and self.got is not None
-                and (self.expected.label, self.expected.points) == (self.got.label, self.got.points))
+        return (
+            self.expected is not None
+            and self.got is not None
+            and (self.expected.label, self.expected.points) == (self.got.label, self.got.points)
+        )
 
 
 @dataclass
@@ -65,8 +69,13 @@ def parse_expected(text: str) -> list[Score]:
     return out
 
 
-def replay(frames: Iterable[np.ndarray], cal: Calibrator, cfg: DetectorConfig,
-           expected: Sequence[Score] = (), baseline_frame: int = 5) -> ReplayResult:
+def replay(
+    frames: Iterable[np.ndarray],
+    cal: Calibrator,
+    cfg: DetectorConfig,
+    expected: Sequence[Score] = (),
+    baseline_frame: int = 5,
+) -> ReplayResult:
     """Run frames through the pipeline. Detections are matched to ``expected`` by order."""
     if baseline_frame < 1:
         raise ValueError(f"--baseline-frame must be >= 1 (got {baseline_frame})")
@@ -83,18 +92,27 @@ def replay(frames: Iterable[np.ndarray], cal: Calibrator, cfg: DetectorConfig,
             flat = cal.to_board(d.tip)
             got.append((score_point(*flat), n, flat))
     if n < baseline_frame:
-        raise ValueError(f"--baseline-frame {baseline_frame} is past the end of the clip ({n} frames)")
+        raise ValueError(
+            f"--baseline-frame {baseline_frame} is past the end of the clip ({n} frames)"
+        )
     rows = []
     for i, (e, g) in enumerate(zip_longest(expected, got), start=1):
         rows.append(Row(i, e, g[0] if g else None, g[1] if g else None, g[2] if g else None))
     return ReplayResult(rows, n)
 
 
-def replay_dual(frames1: Iterable[np.ndarray], frames2: Iterable[np.ndarray],
-                cal1: Calibrator, cal2: Calibrator, cfg: DetectorConfig,
-                expected: Sequence[Score] = (), baseline_frame: int = 5,
-                window: int = 45, min_angle: float = 20.0, cfg2: Optional[DetectorConfig] = None
-                ) -> ReplayResult:
+def replay_dual(
+    frames1: Iterable[np.ndarray],
+    frames2: Iterable[np.ndarray],
+    cal1: Calibrator,
+    cal2: Calibrator,
+    cfg: DetectorConfig,
+    expected: Sequence[Score] = (),
+    baseline_frame: int = 5,
+    window: int = 45,
+    min_angle: float = 20.0,
+    cfg2: Optional[DetectorConfig] = None,
+) -> ReplayResult:
     """Two-camera replay: both clips are stepped in lock-step and detections fused."""
     if baseline_frame < 1:
         raise ValueError(f"--baseline-frame must be >= 1 (got {baseline_frame})")
@@ -123,8 +141,10 @@ def replay_dual(frames1: Iterable[np.ndarray], frames2: Iterable[np.ndarray],
         ready += pairer.tick()
         emit(ready)
     if n < baseline_frame:
-        raise ValueError(f"--baseline-frame {baseline_frame} is past the end of the clips ({n} frames)")
-    for cam, (_, det) in list(pairer._pending.items()):   # clip ended with a lone detection
+        raise ValueError(
+            f"--baseline-frame {baseline_frame} is past the end of the clips ({n} frames)"
+        )
+    for cam, (_, det) in list(pairer._pending.items()):  # clip ended with a lone detection
         emit([(det, None) if cam == 1 else (None, det)])
     rows = []
     for i, (e, g) in enumerate(zip_longest(expected, got), start=1):
@@ -138,7 +158,11 @@ def format_table(res: ReplayResult) -> str:
         e = r.expected.label if r.expected else "-"
         g = r.got.label if r.got else "(missed)"
         pos = f"{r.flat[0]:.0f}, {r.flat[1]:.0f}" if r.flat else ""
-        verdict = "ok" if r.ok else ("EXTRA" if r.expected is None else "MISS" if r.got is None else "WRONG")
+        verdict = (
+            "ok"
+            if r.ok
+            else ("EXTRA" if r.expected is None else "MISS" if r.got is None else "WRONG")
+        )
         lines.append(f"{r.index:>3}  {e:<10} {g:<10} {r.frame or '':>6}  {pos:<14} {verdict}")
     n = sum(r.expected is not None for r in res.rows)
     hit = sum(r.ok for r in res.rows)
@@ -162,12 +186,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fuse-window", type=int, default=45)
     ap.add_argument("--min-cross-angle", type=float, default=20.0)
     ap.add_argument("--baseline-frame", type=int, default=5)
-    ap.add_argument("--min-accuracy", type=float, default=1.0,
-                    help="exit non-zero below this fraction correct (default 1.0)")
+    ap.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=1.0,
+        help="exit non-zero below this fraction correct (default 1.0)",
+    )
     for f in fields(DetectorConfig):
-        ap.add_argument(f"--{f.name.replace('_', '-')}",
-                        type=parse_bool if f.type in ("bool", bool) else type(f.default),
-                        default=f.default)
+        ap.add_argument(
+            f"--{f.name.replace('_', '-')}",
+            type=parse_bool if f.type in ("bool", bool) else type(f.default),
+            default=f.default,
+        )
     a = ap.parse_args(argv)
     cfg = DetectorConfig(**{f.name: getattr(a, f.name) for f in fields(DetectorConfig)})
 
@@ -177,7 +207,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     cal = Calibrator(a.calibration)
     if not cal.load(vf.size):
-        print(f"no usable calibration at {a.calibration} for {vf.size[0]}x{vf.size[1]} video", file=sys.stderr)
+        print(
+            f"no usable calibration at {a.calibration} for {vf.size[0]}x{vf.size[1]} video",
+            file=sys.stderr,
+        )
         return 2
     expected = []
     if a.expect:
@@ -193,14 +226,27 @@ def main(argv: list[str] | None = None) -> int:
                 vf.release()
                 return 2
             if not cal2.load(vf2.size):
-                print(f"no usable calibration at {a.calibration2} for {vf2.size[0]}x{vf2.size[1]} video", file=sys.stderr)
+                print(
+                    f"no usable calibration at {a.calibration2} for {vf2.size[0]}x{vf2.size[1]} video",
+                    file=sys.stderr,
+                )
                 vf.release()
                 vf2.release()
                 return 2
             import dataclasses
-            res = replay_dual(_video_frames(vf), _video_frames(vf2), cal, cal2, cfg, expected,
-                              a.baseline_frame, a.fuse_window, a.min_cross_angle,
-                              dataclasses.replace(cfg, camera_side=a.camera_side2))
+
+            res = replay_dual(
+                _video_frames(vf),
+                _video_frames(vf2),
+                cal,
+                cal2,
+                cfg,
+                expected,
+                a.baseline_frame,
+                a.fuse_window,
+                a.min_cross_angle,
+                dataclasses.replace(cfg, camera_side=a.camera_side2),
+            )
             vf2.release()
         else:
             res = replay(_video_frames(vf), cal, cfg, expected, a.baseline_frame)
@@ -214,7 +260,9 @@ def main(argv: list[str] | None = None) -> int:
     print(format_table(res))
     if not a.expect:
         return 0
-    return 0 if res.accuracy >= a.min_accuracy and all(r.expected is not None for r in res.rows) else 1
+    return (
+        0 if res.accuracy >= a.min_accuracy and all(r.expected is not None for r in res.rows) else 1
+    )
 
 
 if __name__ == "__main__":

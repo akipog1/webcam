@@ -10,6 +10,7 @@ After each scored dart the *reference* frame is replaced by the current frame,
 so the next diff only contains the newest dart. Large-area changes (a hand or
 body) are ignored and restart settling.
 """
+
 from __future__ import annotations
 
 import enum
@@ -36,6 +37,7 @@ class State(enum.Enum):
 @dataclass
 class Detection:
     """A settled dart, in raw camera pixels."""
+
     tip: tuple[float, float]
     centroid: tuple[float, float]
     contour: np.ndarray
@@ -49,7 +51,7 @@ class DartDetector:
         self.cfg = cfg
         self.darts_per_turn = darts_per_turn
         self.state = State.WAIT_BASELINE
-        self.reference: Optional[np.ndarray] = None   # float32, last-dart reference
+        self.reference: Optional[np.ndarray] = None  # float32, last-dart reference
         self.turn_baseline: Optional[np.ndarray] = None  # empty-board reference
         self.darts_this_turn = 0
         self._settle_count = 0
@@ -163,7 +165,9 @@ class DartDetector:
         self.reference = img.copy()  # only the next dart will differ
         self.darts_this_turn += 1
         self.last_detection = det
-        self.state = State.WAIT_REMOVAL if self.darts_this_turn >= self.darts_per_turn else State.SCORED
+        self.state = (
+            State.WAIT_REMOVAL if self.darts_this_turn >= self.darts_per_turn else State.SCORED
+        )
         if self.state == State.WAIT_REMOVAL:
             self._settle_count = 0
         return det
@@ -199,7 +203,9 @@ class DartDetector:
         return Detection(estimate_tip(c, self.cfg.tip_method, self.cfg.camera_side), cen, c, area)
 
 
-def estimate_tip(contour: np.ndarray, method: str = "fitline", camera_side: str = "bottom") -> tuple[float, float]:
+def estimate_tip(
+    contour: np.ndarray, method: str = "fitline", camera_side: str = "bottom"
+) -> tuple[float, float]:
     """Estimate the dart tip in raw image pixels.
 
     Assumptions:

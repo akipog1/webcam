@@ -1,4 +1,5 @@
 """Synthetic scene helpers: a perspective camera looking at a rendered board."""
+
 import cv2
 import numpy as np
 
@@ -68,11 +69,9 @@ def calibrated(h_canvas2cam, noise=1.0, seed=0):
     return cal, err
 
 
-
-
 # Aim points in the middle of each region (away from wires) -> expected label.
 AIMS = [
     ("T20", board.polar_to_canvas(103 * board.PX_PER_MM, 0)),
-    ("D16", board.polar_to_canvas(166 * board.PX_PER_MM, 234)),   # 16 spans 234 deg
-    ("S5", board.polar_to_canvas(135 * board.PX_PER_MM, 342)),    # 5 spans 342 deg
+    ("D16", board.polar_to_canvas(166 * board.PX_PER_MM, 234)),  # 16 spans 234 deg
+    ("S5", board.polar_to_canvas(135 * board.PX_PER_MM, 342)),  # 5 spans 342 deg
 ]

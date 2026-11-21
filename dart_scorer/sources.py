@@ -1,4 +1,5 @@
 """Frame sources (live camera, video file) and an optional recorder."""
+
 from __future__ import annotations
 
 import logging
@@ -15,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 class FrameSource(Protocol):
-    size: tuple[int, int]   # (width, height) of frames returned by read()
+    size: tuple[int, int]  # (width, height) of frames returned by read()
     fps: float
     is_live: bool
 
@@ -26,6 +27,7 @@ class FrameSource(Protocol):
 
 class Camera:
     """VideoCapture wrapper with explicit resolution and reconnects."""
+
     is_live = True
 
     def __init__(self, cfg: AppConfig, index: Optional[int] = None) -> None:
@@ -57,8 +59,11 @@ class Camera:
                 if (frame.shape[1], frame.shape[0]) != self.size:
                     frame = cv2.resize(frame, self.size)
                 return frame
-            log.warning("camera read failed (attempt %d/%d); reconnecting",
-                        attempt + 1, self.cfg.max_reconnect_attempts)
+            log.warning(
+                "camera read failed (attempt %d/%d); reconnecting",
+                attempt + 1,
+                self.cfg.max_reconnect_attempts,
+            )
             time.sleep(self.cfg.reconnect_delay)
             if not self.open():
                 log.error("could not reopen camera %d", self.index)
@@ -71,6 +76,7 @@ class Camera:
 
 class VideoFile:
     """Replays a recorded clip at its native resolution. ``read`` returns None at the end."""
+
     is_live = False
 
     def __init__(self, path: str) -> None:

@@ -3,6 +3,7 @@
 Boundary convention (contiguous, no gaps): a point exactly on a wire belongs
 to the *inner* region, i.e. every ring is ``(inner, outer]``.
 """
+
 from __future__ import annotations
 
 import math
@@ -15,6 +16,7 @@ from . import board
 @dataclass(frozen=True)
 class Score:
     """Result of scoring one dart."""
+
     label: str
     points: int
     ring: str  # inner_bull | outer_bull | inner_single | treble | outer_single | double | miss

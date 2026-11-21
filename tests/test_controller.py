@@ -43,7 +43,12 @@ def test_score_updates_game_marks_and_csv(ctl):
     assert s.label == "T20" and ctl.game.player.remaining == 441
     assert len(ctl.marks) == 1
     r = rows(ctl)
-    assert len(r) == 1 and r[0]["label"] == "T20" and r[0]["source"] == "auto" and r[0]["raw_x"] == "10.0"
+    assert (
+        len(r) == 1
+        and r[0]["label"] == "T20"
+        and r[0]["source"] == "auto"
+        and r[0]["raw_x"] == "10.0"
+    )
 
 
 def test_rejected_darts_not_logged_or_marked(ctl):
@@ -57,7 +62,7 @@ def test_rejected_darts_not_logged_or_marked(ctl):
 
 def test_darts_after_bust_not_logged(ctl):
     ctl.game.players[0].remaining = ctl.game.turn_start_remaining = 20
-    ctl.score((0, 0), flat(0, 103))           # T20 -> bust
+    ctl.score((0, 0), flat(0, 103))  # T20 -> bust
     assert ctl.game.busted
     assert ctl.score((0, 0), flat(0, 103)) is None
     assert len(rows(ctl)) == 1
@@ -80,10 +85,10 @@ def test_undo_with_nothing_to_undo(ctl):
 
 
 def test_board_click_overrides_last_dart(ctl):
-    ctl.board_click(*flat(0, 103))              # nothing thrown: ignored
+    ctl.board_click(*flat(0, 103))  # nothing thrown: ignored
     assert rows(ctl) == []
     ctl.score((0, 0), flat(0, 103))
-    ctl.board_click(*flat(342, 135))             # S5
+    ctl.board_click(*flat(342, 135))  # S5
     assert ctl.game.turn_darts[-1].label == "S5" and ctl.game.player.remaining == 496
     assert ctl.marks[-1][1].label == "S5" and len(ctl.marks) == 1
     assert rows(ctl)[-1]["source"] == "click_override"
@@ -101,7 +106,7 @@ def test_typed_override_replaces_last_dart(ctl):
 
 
 def test_typed_score_with_no_dart_adds_one_with_mark(ctl):
-    key(ctl, "eb")                                # B = bull
+    key(ctl, "eb")  # B = bull
     ctl.handle_key(13, FRAME)
     assert ctl.game.player.remaining == 451 and len(ctl.marks) == 1 and ctl.marks[0][0] is None
     ctl.undo(FRAME)
@@ -118,13 +123,13 @@ def test_typed_invalid_cancel_backspace(ctl):
     ctl.handle_key(27, FRAME)
     assert ctl.edit_buffer is None
     key(ctl, "e")
-    ctl.handle_key(ord("z"), FRAME)               # not an allowed character
+    ctl.handle_key(ord("z"), FRAME)  # not an allowed character
     ctl.handle_key(255, FRAME)
     assert ctl.edit_buffer == ""
 
 
 def test_typed_score_ignored_after_game_won(ctl):
-    ctl.game.winner = "A"                         # finished game, new empty turn
+    ctl.game.winner = "A"  # finished game, new empty turn
     key(ctl, "e20")
     ctl.handle_key(13, FRAME)
     assert ctl.marks == [] and rows(ctl) == [] and "Ignored" in ctl.message
@@ -153,10 +158,29 @@ def test_throw_logger_does_not_rewrite_header(tmp_path):
 def test_parse_args_defaults_and_overrides():
     cfg = parse_args([])
     assert cfg.game == 501 and cfg.double_out and cfg.video == "" and cfg.record == ""
-    cfg = parse_args(["--game", "301", "--no-double-out", "--players", "X", "Y", "Z",
-                      "--diff-threshold", "40", "--shadow-v-only", "false",
-                      "--tip-method", "lowest", "--camera-side", "left",
-                      "--video", "a.mp4", "--record", "b.avi"])
+    cfg = parse_args(
+        [
+            "--game",
+            "301",
+            "--no-double-out",
+            "--players",
+            "X",
+            "Y",
+            "Z",
+            "--diff-threshold",
+            "40",
+            "--shadow-v-only",
+            "false",
+            "--tip-method",
+            "lowest",
+            "--camera-side",
+            "left",
+            "--video",
+            "a.mp4",
+            "--record",
+            "b.avi",
+        ]
+    )
     assert (cfg.game, cfg.double_out, cfg.players) == (301, False, ["X", "Y", "Z"])
     assert cfg.detector.diff_threshold == 40 and cfg.detector.shadow_v_only is False
     assert cfg.detector.tip_method == "lowest" and cfg.detector.camera_side == "left"

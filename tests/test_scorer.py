@@ -25,15 +25,25 @@ def test_twenty_is_top_and_six_is_right():
     assert score_point(300, 500).sector == 11
 
 
-@pytest.mark.parametrize("radius,ring,mult", [
-    (0, "inner_bull", 2), (board.INNER_BULL_PX, "inner_bull", 2),
-    (board.INNER_BULL_PX + 0.01, "outer_bull", 1), (board.OUTER_BULL_PX, "outer_bull", 1),
-    (board.OUTER_BULL_PX + 0.01, "inner_single", 1), (board.TREBLE_INNER_PX, "inner_single", 1),
-    (board.TREBLE_INNER_PX + 0.01, "treble", 3), (board.TREBLE_OUTER_PX, "treble", 3),
-    (board.TREBLE_OUTER_PX + 0.01, "outer_single", 1), (board.DOUBLE_INNER_PX, "outer_single", 1),
-    (board.DOUBLE_INNER_PX + 0.01, "double", 2), (board.DOUBLE_OUTER_PX, "double", 2),
-    (board.DOUBLE_OUTER_PX + 0.01, "miss", 0), (499, "miss", 0),
-])
+@pytest.mark.parametrize(
+    "radius,ring,mult",
+    [
+        (0, "inner_bull", 2),
+        (board.INNER_BULL_PX, "inner_bull", 2),
+        (board.INNER_BULL_PX + 0.01, "outer_bull", 1),
+        (board.OUTER_BULL_PX, "outer_bull", 1),
+        (board.OUTER_BULL_PX + 0.01, "inner_single", 1),
+        (board.TREBLE_INNER_PX, "inner_single", 1),
+        (board.TREBLE_INNER_PX + 0.01, "treble", 3),
+        (board.TREBLE_OUTER_PX, "treble", 3),
+        (board.TREBLE_OUTER_PX + 0.01, "outer_single", 1),
+        (board.DOUBLE_INNER_PX, "outer_single", 1),
+        (board.DOUBLE_INNER_PX + 0.01, "double", 2),
+        (board.DOUBLE_OUTER_PX, "double", 2),
+        (board.DOUBLE_OUTER_PX + 0.01, "miss", 0),
+        (499, "miss", 0),
+    ],
+)
 def test_ring_boundaries_contiguous(radius, ring, mult):
     s = score_polar(radius, 0)
     assert s.ring == ring and s.multiplier == mult
@@ -59,7 +69,9 @@ def test_calibration_targets_match_scoring_radius():
             assert score_point(x, y).ring == "double"
 
 
-@pytest.mark.parametrize("txt,pts", [("T20", 60), ("d16", 32), ("S5", 5), ("7", 7), ("25", 25), ("50", 50), ("0", 0)])
+@pytest.mark.parametrize(
+    "txt,pts", [("T20", 60), ("d16", 32), ("S5", 5), ("7", 7), ("25", 25), ("50", 50), ("0", 0)]
+)
 def test_parse_score(txt, pts):
     assert parse_score(txt).points == pts
 
@@ -72,6 +84,7 @@ def test_parse_invalid():
 def test_parse_score_bull_shorthand_and_errors():
     from dart_scorer.scorer import parse_score
     import pytest
+
     assert parse_score("B").points == 50
     assert parse_score("bull").points == 50
     for bad in ("", "T", "X5", "T21", "S", "BB"):

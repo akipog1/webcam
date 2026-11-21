@@ -5,6 +5,7 @@ are scaled into the flat, top-down canvas used after homography. Both the
 calibration targets and the scorer import from here, so they can never drift
 apart (the original code calibrated to 350 px but scored the double at 340 px).
 """
+
 from __future__ import annotations
 
 import math
@@ -30,13 +31,16 @@ TREBLE_OUTER_PX = TREBLE_OUTER_MM * PX_PER_MM
 DOUBLE_INNER_PX = DOUBLE_INNER_MM * PX_PER_MM
 
 RING_RADII_PX: tuple[float, ...] = (
-    INNER_BULL_PX, OUTER_BULL_PX, TREBLE_INNER_PX,
-    TREBLE_OUTER_PX, DOUBLE_INNER_PX, DOUBLE_OUTER_PX,
+    INNER_BULL_PX,
+    OUTER_BULL_PX,
+    TREBLE_INNER_PX,
+    TREBLE_OUTER_PX,
+    DOUBLE_INNER_PX,
+    DOUBLE_OUTER_PX,
 )
 
 #: Clockwise from the top.
-SECTORS: tuple[int, ...] = (20, 1, 18, 4, 13, 6, 10, 15, 2, 17,
-                            3, 19, 7, 16, 8, 11, 14, 9, 12, 5)
+SECTORS: tuple[int, ...] = (20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5)
 
 
 def polar_to_canvas(radius_px: float, angle_deg_clockwise_from_top: float) -> tuple[float, float]:

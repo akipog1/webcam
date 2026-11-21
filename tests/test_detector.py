@@ -13,14 +13,20 @@ def blank():
 
 def with_darts(darts):
     f = blank()
-    for (x1, y1, x2, y2) in darts:
+    for x1, y1, x2, y2 in darts:
         cv2.line(f, (x1, y1), (x2, y2), 220, 4)
     return f
 
 
 def cfg():
-    return DetectorConfig(settle_frames=3, min_area=20, max_area=3000, hand_motion_area=8000,
-                          shadow_v_only=False, tip_method="lowest")
+    return DetectorConfig(
+        settle_frames=3,
+        min_area=20,
+        max_area=3000,
+        hand_motion_area=8000,
+        shadow_v_only=False,
+        tip_method="lowest",
+    )
 
 
 def feed(d, frame, n):
@@ -61,7 +67,8 @@ def test_requires_settling():
 def test_ignores_hand_sized_motion():
     d = DartDetector(cfg())
     d.capture_baseline(blank())
-    hand = blank(); hand[20:200, 20:300] = 250
+    hand = blank()
+    hand[20:200, 20:300] = 250
     assert feed(d, hand, 20) == []
 
 
@@ -80,7 +87,8 @@ def test_three_darts_then_wait_removal_then_reset():
 def test_round_blob_rejected_by_aspect():
     d = DartDetector(cfg())
     d.capture_baseline(blank())
-    f = blank(); cv2.circle(f, (100, 100), 12, 220, -1)
+    f = blank()
+    cv2.circle(f, (100, 100), 12, 220, -1)
     assert feed(d, f, 20) == []
 
 
@@ -107,16 +115,22 @@ def test_fitline_tip_resists_an_off_axis_contour_lobe():
     axis = np.array([0.4472136, 0.8944272], dtype=np.float32)
     normal = np.array([-axis[1], axis[0]], dtype=np.float32)
     center = np.array([80, 90], dtype=np.float32)
-    shaft = np.array([
-        center + along * axis + across * normal
-        for along in np.linspace(-60, 60, 121)
-        for across in (-2, 2)
-    ], dtype=np.float32)
-    lobe = np.array([
-        center + along * axis + (35 + across) * normal
-        for along in np.linspace(-50, -30, 20)
-        for across in (-2, 2)
-    ], dtype=np.float32)
+    shaft = np.array(
+        [
+            center + along * axis + across * normal
+            for along in np.linspace(-60, 60, 121)
+            for across in (-2, 2)
+        ],
+        dtype=np.float32,
+    )
+    lobe = np.array(
+        [
+            center + along * axis + (35 + across) * normal
+            for along in np.linspace(-50, -30, 20)
+            for across in (-2, 2)
+        ],
+        dtype=np.float32,
+    )
     contour = np.vstack((shaft, lobe)).reshape(-1, 1, 2)
     expected_tip = center + 60 * axis
 

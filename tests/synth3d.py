@@ -6,6 +6,7 @@ pinhole models; a dart is a 3-D segment from the tip (on the board) outward.
 Because the projection is real, a dart's flight lands in a different place for
 each camera, which is exactly what makes single-camera scoring ambiguous.
 """
+
 import cv2
 import numpy as np
 
@@ -15,13 +16,13 @@ from synth import H, W, render_board
 
 F = 900.0
 K = np.array([[F, 0, W / 2], [0, F, H / 2], [0, 0, 1]], np.float64)
-CAM1 = (0.0, 450.0, -520.0)       # below and in front of the board
-CAM2 = (-560.0, 60.0, -420.0)     # to the left, slightly low
+CAM1 = (0.0, 450.0, -520.0)  # below and in front of the board
+CAM2 = (-560.0, 60.0, -420.0)  # to the left, slightly low
 
 
 def _pose(pos):
     c = np.array(pos, np.float64)
-    f = -c / np.linalg.norm(c)                        # look at the board centre
+    f = -c / np.linalg.norm(c)  # look at the board centre
     down = np.array([0.0, 1.0, 0.0]) - f * f[1]
     down /= np.linalg.norm(down)
     x = np.cross(down, f)
@@ -41,12 +42,15 @@ class Cam:
 
     @staticmethod
     def mm(canvas_pt):
-        return ((canvas_pt[0] - board.CENTER[0]) / board.PX_PER_MM,
-                (canvas_pt[1] - board.CENTER[1]) / board.PX_PER_MM)
+        return (
+            (canvas_pt[0] - board.CENTER[0]) / board.PX_PER_MM,
+            (canvas_pt[1] - board.CENTER[1]) / board.PX_PER_MM,
+        )
 
     def project(self, pts3):
-        out, _ = cv2.projectPoints(np.asarray(pts3, np.float64).reshape(-1, 1, 3),
-                                   self.rvec, self.tvec, K, None)
+        out, _ = cv2.projectPoints(
+            np.asarray(pts3, np.float64).reshape(-1, 1, 3), self.rvec, self.tvec, K, None
+        )
         return out.reshape(-1, 2)
 
     def background(self):
@@ -71,5 +75,11 @@ class Cam:
         d /= np.linalg.norm(d)
         tip = np.array([x, y, 0.0])
         a, b = self.project([tip, tip + d * length_mm])
-        cv2.line(frame, tuple(int(round(v)) for v in a), tuple(int(round(v)) for v in b),
-                 (255, 255, 255), 5, cv2.LINE_AA)
+        cv2.line(
+            frame,
+            tuple(int(round(v)) for v in a),
+            tuple(int(round(v)) for v in b),
+            (255, 255, 255),
+            5,
+            cv2.LINE_AA,
+        )
