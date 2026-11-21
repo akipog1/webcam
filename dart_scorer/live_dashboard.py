@@ -68,6 +68,7 @@ def _quality(det: Optional[Detection], detector: DartDetector) -> Optional[float
 class LiveDashboard:
     """Renders camera feeds, board projection and runtime diagnostic metrics."""
     WINDOW = "Dart Scorer - Live Diagnostics"
+    RENDER_INTERVAL_SECONDS = 0.10
 
     def __init__(self, dual: bool = False) -> None:
         self.dual = dual
@@ -79,6 +80,17 @@ class LiveDashboard:
         self._last_board = None
         self._read_times = [None, None]
         self._latency_ms = 0.0
+        self._last_render_time: Optional[float] = None
+
+    def should_render(self, now: Optional[float] = None) -> bool:
+        """Limit expensive diagnostic rendering without slowing frame capture."""
+        if now is None:
+            now = time.perf_counter()
+        if (self._last_render_time is not None
+                and now - self._last_render_time < self.RENDER_INTERVAL_SECONDS):
+            return False
+        self._last_render_time = now
+        return True
 
     def record_frame(self, index: int, read_time: float, processing_ms: float,
                      detector: DartDetector, detection: Optional[Detection]) -> None:
