@@ -45,6 +45,23 @@ def test_waits_for_baseline():
     assert d.state == State.WAIT_BASELINE
 
 
+def test_identical_frames_skip_processing(monkeypatch):
+    d = DartDetector(cfg())
+    frame = blank()
+    d.capture_baseline(frame)
+    calls = 0
+    original = d.preprocess
+
+    def counted_preprocess(value):
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(d, "preprocess", counted_preprocess)
+    assert d.update(frame) is None
+    assert calls == 0
+
+
 def test_scores_each_dart_once_and_only_newest():
     d = DartDetector(cfg())
     d.capture_baseline(blank())
