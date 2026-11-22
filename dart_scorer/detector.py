@@ -53,11 +53,19 @@ class DartDetector:
         self.state = State.WAIT_BASELINE
         self.reference: Optional[np.ndarray] = None  # float32, last-dart reference
         self.turn_baseline: Optional[np.ndarray] = None  # empty-board reference
+        self.reference_frame: Optional[np.ndarray] = None
+        self.turn_baseline_frame: Optional[np.ndarray] = None
         self.darts_this_turn = 0
         self._settle_count = 0
         self._last_mask: Optional[np.ndarray] = None
         self.last_mask: Optional[np.ndarray] = None
         self.last_detection: Optional[Detection] = None
+        kernel_size = self.cfg.morph_kernel
+        self._morph_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (kernel_size, kernel_size)
+        )
+        self._idle_mask: Optional[np.ndarray] = None
+        self._idle_mask_shape: Optional[tuple[int, int]] = None
 
     # ---------- preprocessing ----------
     def preprocess(self, frame: np.ndarray) -> np.ndarray:
@@ -75,9 +83,11 @@ class DartDetector:
     def diff_mask(self, img: np.ndarray, ref: np.ndarray) -> np.ndarray:
         diff = cv2.absdiff(img, ref).astype(np.uint8)
         _, m = cv2.threshold(diff, self.cfg.diff_threshold, 255, cv2.THRESH_BINARY)
-        k = np.ones((self.cfg.morph_kernel, self.cfg.morph_kernel), np.uint8)
-        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k)
-        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k, iterations=2)
+        changed = cv2.countNonZero(m)
+        if changed < self.cfg.min_area or changed > self.cfg.hand_motion_area:
+            return m
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self._morph_kernel)
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self._morph_kernel, iterations=2)
         return m
 
     # ---------- control ----------
@@ -85,6 +95,8 @@ class DartDetector:
         img = self.preprocess(frame)
         self.reference = img.copy()
         self.turn_baseline = img.copy()
+        self.reference_frame = frame.copy()
+        self.turn_baseline_frame = frame.copy()
         self.darts_this_turn = 0
         self._settle_count = 0
         self.state = State.WAIT_THROW
@@ -106,11 +118,33 @@ class DartDetector:
         self._last_mask = None
         if self.state != State.WAIT_BASELINE:
             self.reference = self.preprocess(frame)
+            self.reference_frame = frame.copy()
             self.state = State.WAIT_THROW
 
     # ---------- main ----------
     def update(self, frame: np.ndarray) -> Optional[Detection]:
         if self.state == State.WAIT_BASELINE or self.reference is None:
+            return None
+        baseline_frame = (
+            self.turn_baseline_frame
+            if self.state == State.WAIT_REMOVAL
+            else self.reference_frame
+        )
+        if baseline_frame is not None and np.array_equal(frame, baseline_frame):
+            shape = (frame.shape[0], frame.shape[1])
+            if self._idle_mask_shape != shape:
+                self._idle_mask = np.zeros(shape, np.uint8)
+                self._idle_mask_shape = shape
+            self.last_mask = self._idle_mask
+            if self.state == State.WAIT_REMOVAL:
+                self._settle_count += 1
+                if self._settle_count >= self.cfg.settle_frames:
+                    log.info("darts removed; ready for next turn")
+                    self.capture_baseline(frame)
+            else:
+                self._settle_count = 0
+                self._last_mask = None
+                self.state = State.WAIT_THROW
             return None
         img = self.preprocess(frame)
 
@@ -163,6 +197,7 @@ class DartDetector:
             self.state = State.WAIT_THROW
             return None
         self.reference = img.copy()  # only the next dart will differ
+        self.reference_frame = frame.copy()
         self.darts_this_turn += 1
         self.last_detection = det
         self.state = (
@@ -179,7 +214,7 @@ class DartDetector:
 
     # ---------- contour analysis ----------
     def _find_dart(self, mask: np.ndarray) -> Optional[Detection]:
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         best: Optional[tuple[float, np.ndarray]] = None
         for c in contours:
             area = cv2.contourArea(c)
